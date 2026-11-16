@@ -399,11 +399,10 @@ def format_time(ms):
 
 
 def draw_pulsing_title(surf, now_ms, center):
-    """Draws 'BREAKOUT' with a soft pulsing glow/scale effect, based on real time."""
+    """Desenha 'BREAKOUT' com sombra + brilho suave pulsante, sem duplicar/desalinhar
+    o texto (evita o artefato de usar dois rotozoom com escalas diferentes)."""
     t = now_ms / 1000.0
     pulse = (math.sin(t * 2.4) + 1) / 2  # 0..1
-    scale = 1.0 + 0.06 * pulse
-    glow_alpha = int(70 + 130 * pulse)
 
     base_color = (0, 220, 255)
     accent_color = (255, 90, 200)
@@ -411,57 +410,133 @@ def draw_pulsing_title(surf, now_ms, center):
 
     text = "BREAKOUT"
     main_surface = title_font.render(text, True, color)
-    glow_surface = title_font.render(text, True, accent_color)
+    rect = main_surface.get_rect(center=center)
 
-    scaled_main = pygame.transform.rotozoom(main_surface, 0, scale)
-    scaled_glow = pygame.transform.rotozoom(glow_surface, 0, scale * 1.15)
-    scaled_glow.set_alpha(glow_alpha)
-
-    glow_rect = scaled_glow.get_rect(center=center)
-    main_rect = scaled_main.get_rect(center=center)
-    surf.blit(scaled_glow, glow_rect)
-    surf.blit(scaled_main, main_rect)
+    # sombra solida leve, pra dar profundidade sem usar escala/blur (que gera "fantasma"
+    # em texto de borda nitida) - só um offset simples atras do texto principal
+    shadow_surface = title_font.render(text, True, (20, 10, 30))
+    surf.blit(shadow_surface, (rect.x + 5, rect.y + 5))
+    surf.blit(main_surface, rect)
 
 
-def draw_menu(surf, now_ms):
-    surf.fill(BLACK)
-    draw_pulsing_title(surf, now_ms, (WIDTH // 2, HEIGHT // 2 - 120))
+_menu_bg_cache = None
+
+
+def _build_menu_background():
+    """Monta (uma unica vez) o cenario retro 8-bit: ceu em gradiente, montanhas
+    e skyline de cidade com janelas acesas. Fica em cache porque usa posicoes
+    aleatorias fixas - gerar de novo a cada frame faria tudo "piscar" trocando
+    de lugar."""
+    bg = pygame.Surface((WIDTH, HEIGHT))
+    horizon_y = 430
+
+    top_color = (12, 10, 45)
+    bottom_color = (4, 4, 16)
+    for y in range(horizon_y):
+        t = y / horizon_y
+        color = tuple(int(top_color[i] * (1 - t) + bottom_color[i] * t) for i in range(3))
+        pygame.draw.line(bg, color, (0, y), (WIDTH, y))
+    pygame.draw.rect(bg, bottom_color, (0, horizon_y, WIDTH, HEIGHT - horizon_y))
+
+    rng = random.Random(42)
+    for _ in range(70):
+        x = rng.randint(0, WIDTH)
+        y = rng.randint(0, horizon_y - 50)
+        size = rng.choice([1, 1, 1, 2])
+        pygame.draw.rect(bg, (200, 200, 235), (x, y, size, size))
+
+    def jagged_mountain(base_y, amplitude, color, seed, step=40):
+        rng2 = random.Random(seed)
+        pts = [(0, horizon_y)]
+        x = 0
+        while x <= WIDTH:
+            pts.append((x, base_y - rng2.randint(0, amplitude)))
+            x += step
+        pts.append((WIDTH, horizon_y))
+        pygame.draw.polygon(bg, color, pts)
+
+    jagged_mountain(horizon_y - 40, 70, (26, 20, 58), 1)
+    jagged_mountain(horizon_y - 8, 50, (16, 13, 42), 2)
+    pygame.draw.rect(bg, (45, 65, 150), (0, horizon_y, WIDTH, 3))
+
+    rng3 = random.Random(7)
+    building_color = (32, 16, 55)
+    x = 0
+    while x < WIDTH:
+        bw = rng3.randint(32, 64)
+        bh = rng3.randint(60, 160)
+        by = HEIGHT - bh
+        pygame.draw.rect(bg, building_color, (x, by, bw, HEIGHT - by))
+        wx = x + 5
+        while wx < x + bw - 5:
+            wy = by + 6
+            while wy < HEIGHT - 8:
+                if rng3.random() < 0.3:
+                    wc = rng3.choice([(255, 220, 120), (255, 120, 180), (150, 220, 255)])
+                    pygame.draw.rect(bg, wc, (wx, wy, 3, 4))
+                wy += 9
+            wx += 8
+        x += bw + 3
+    return bg
+
+
+def draw_retro_background(surf, now_ms):
+    global _menu_bg_cache
+    if _menu_bg_cache is None:
+        _menu_bg_cache = _build_menu_background()
+    surf.blit(_menu_bg_cache, (0, 0))
+    t = now_ms / 1000.0
+    for i in range(5):
+        tw = (math.sin(t * 2 + i * 1.3) + 1) / 2
+        x = 70 + i * 160
+        y = 35 + (i % 3) * 22
+        dot = pygame.Surface((2, 2), pygame.SRCALPHA)
+        dot.fill((255, 255, 255, int(100 + 150 * tw)))
+        surf.blit(dot, (x, y))
+
+
+def draw_menu(surf, now_ms, selected):
+    draw_retro_background(surf, now_ms)
+    draw_pulsing_title(surf, now_ms, (WIDTH // 2, 120))
+
+    option_y = 300
+    spacing = 46
+    for i, option in enumerate(MENU_OPTIONS):
+        is_sel = i == selected
+        color = (255, 230, 60) if is_sel else (210, 210, 220)
+        label = f"> {option} <" if is_sel else option
+        rendered = menu_hint_font.render(label, True, color)
+        surf.blit(rendered, (WIDTH // 2 - rendered.get_width() // 2, option_y + i * spacing))
+
+    hint = menu_font.render("Use as SETAS para escolher e ESPACO para confirmar", True, (170, 170, 185))
+    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, option_y + len(MENU_OPTIONS) * spacing + 24))
+
+
+def draw_credits(surf, now_ms):
+    draw_retro_background(surf, now_ms)
+    title = big_font.render("CREDITOS", True, (0, 220, 255))
+    surf.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
 
     lines = [
-        "Use as SETAS (<- ->) ou A / D para mover a raquete",
-        "Quebre os tijolos e colete as capsulas de power-up:",
+        "Jogo desenvolvido em Python + Pygame",
+        "Baseado no classico Arkanoid / Breakout",
+        "",
+        "Controles: SETAS ou A / D para mover a raquete",
+        "ESPACO lanca a bola e confirma opcoes do menu",
+        "",
+        "W = raquete larga   M = multi-bola   S = bola lenta",
+        "",
+        "Trabalho AV2 - Linguagens - Uniasselvi",
     ]
-    y = HEIGHT // 2 - 10
+    y = 160
     for line in lines:
-        rendered = menu_font.render(line, True, WHITE)
-        surf.blit(rendered, (WIDTH // 2 - rendered.get_width() // 2, y))
-        y += 32
+        if line:
+            rendered = menu_font.render(line, True, WHITE)
+            surf.blit(rendered, (WIDTH // 2 - rendered.get_width() // 2, y))
+        y += 30
 
-    legend = [
-        ("W", POWERUP_COLORS["W"], "raquete larga"),
-        ("M", POWERUP_COLORS["M"], "multi-bola"),
-        ("S", POWERUP_COLORS["S"], "bola lenta"),
-    ]
-    legend_y = y + 6
-    total_w = len(legend) * 170
-    start_x = WIDTH // 2 - total_w // 2
-    for i, (letter, color, label) in enumerate(legend):
-        bx = start_x + i * 170
-        box = pygame.Rect(bx, legend_y, 26, 26)
-        pygame.draw.rect(surf, color, box, border_radius=6)
-        pygame.draw.rect(surf, BLACK, box, width=2, border_radius=6)
-        letter_surf = powerup_font.render(letter, True, BLACK)
-        surf.blit(letter_surf, (box.centerx - letter_surf.get_width() // 2,
-                                 box.centery - letter_surf.get_height() // 2))
-        label_surf = menu_font.render(label, True, WHITE)
-        surf.blit(label_surf, (bx + 34, legend_y + 2))
-
-    # hint pisca suavemente, baseado em tempo real
-    blink = (math.sin(now_ms / 250.0) + 1) / 2
-    hint_alpha = int(140 + 115 * blink)
-    hint_surface = menu_hint_font.render("Pressione ESPACO para comecar", True, (120, 230, 90))
-    hint_surface.set_alpha(hint_alpha)
-    surf.blit(hint_surface, (WIDTH // 2 - hint_surface.get_width() // 2, legend_y + 70))
+    hint = menu_font.render("Pressione ESPACO ou ESC para voltar", True, (120, 230, 90))
+    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, y + 16))
 
 
 def draw_powerup_timer(surf, label, until_ticks, now, color, y):
@@ -490,8 +565,13 @@ def draw_level_complete(surf, level):
     surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT // 2 + 30))
 
 
+MENU_OPTIONS = ["INICIAR JOGO", "CREDITOS", "SAIR"]
+
+
 def main():
     state = "menu"  # "menu" ou "playing"
+    menu_selected = 0
+    menu_view = "main"  # "main" ou "credits"
 
     paddle = Paddle()
     balls = [Ball()]
@@ -542,12 +622,29 @@ def main():
                 sys.exit()
             if event.type == pygame.KEYDOWN:
                 if state == "menu":
-                    if event.key == pygame.K_SPACE:
-                        reset_game()
-                        state = "playing"
+                    if menu_view == "credits":
+                        if event.key in (pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN):
+                            menu_view = "main"
+                    else:
+                        if event.key in (pygame.K_UP, pygame.K_w):
+                            menu_selected = (menu_selected - 1) % len(MENU_OPTIONS)
+                        elif event.key in (pygame.K_DOWN, pygame.K_s):
+                            menu_selected = (menu_selected + 1) % len(MENU_OPTIONS)
+                        elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                            choice = MENU_OPTIONS[menu_selected]
+                            if choice == "INICIAR JOGO":
+                                reset_game()
+                                state = "playing"
+                            elif choice == "CREDITOS":
+                                menu_view = "credits"
+                            elif choice == "SAIR":
+                                pygame.quit()
+                                sys.exit()
                 elif event.key == pygame.K_r and (game_over or won):
                     reset_game()
                     state = "menu"
+                    menu_view = "main"
+                    menu_selected = 0
                 elif not game_over and not won and not transitioning:
                     direction = None
                     if event.key in (pygame.K_LEFT, pygame.K_a):
@@ -688,7 +785,10 @@ def main():
         draw_surf.fill(BLACK)
 
         if state == "menu":
-            draw_menu(draw_surf, now)
+            if menu_view == "credits":
+                draw_credits(draw_surf, now)
+            else:
+                draw_menu(draw_surf, now, menu_selected)
         else:
             for brick in bricks:
                 brick.draw(draw_surf)
