@@ -23,6 +23,7 @@ except ImportError:
         np = None
 
 sound_enabled = True
+sound_volume = 0.7  # 0.0 a 1.0, ajustavel pelo menu de pausa
 SOUNDS = {}
 AUDIO_SAMPLE_RATE = 44100
 
@@ -96,7 +97,7 @@ SOUND_THROTTLE_MS = 40  # evita "cacho" de som quando varios eventos batem no me
 
 
 def play_sound(name):
-    if not sound_enabled:
+    if not sound_enabled or sound_volume <= 0:
         return
     now = pygame.time.get_ticks()
     if now - _last_played_ms.get(name, -SOUND_THROTTLE_MS) < SOUND_THROTTLE_MS:
@@ -104,6 +105,7 @@ def play_sound(name):
     snd = SOUNDS.get(name)
     if snd is not None:
         try:
+            snd.set_volume(sound_volume)
             snd.play()
             _last_played_ms[name] = now
         except Exception:
@@ -358,10 +360,10 @@ class PowerUp:
 
 
 def make_bricks(level=1):
-    """Monta o grid de tijolos. Linhas mais perto do topo quebram com 1 batida;
-    linhas mais perto da raquete precisam de mais batidas, ate um maximo de 3.
-    Conforme o nivel sobe, o grid cresce (mais linhas), mas o teto de vida por
-    tijolo continua fixo em 3."""
+    """Monta o grid de tijolos. A fileira mais perto da raquete (a primeira que
+    a bola encontra ao jogar) quebra com 1 batida; subindo dai pra cima as
+    fileiras exigem mais batidas, ate um maximo de 3. Conforme o nivel sobe, o
+    grid cresce (mais linhas), mas o teto de vida por tijolo continua fixo em 3."""
     bricks = []
     rows = min(5 + (level - 1) // 2, 8)
     cols = 10
@@ -371,16 +373,17 @@ def make_bricks(level=1):
     brick_w = (WIDTH - offset_side * 2 - padding * (cols - 1)) // cols
     brick_h = 24
 
-    # limites das "faixas" de vida: primeiros ~40% das linhas = 1 vida,
-    # ate ~80% = 2 vidas, resto (mais perto da raquete) = 3 vidas.
-    # Para o grid padrao de 5 linhas isso da exatamente: linha 0-1=1, 2-3=2, 4=3.
-    boundary_1 = round(rows * 0.4)
-    boundary_2 = round(rows * 0.8)
+    # so a fileira mais perto da raquete (ultima linha do grid) quebra com 1
+    # toque, a anterior com 2 toques, e todo o resto (mais longe, perto do
+    # topo) ja fica no teto de 3 toques, em qualquer nivel.
+    boundary_1 = 1
+    boundary_2 = 2
 
     for row in range(rows):
-        if row < boundary_1:
+        from_paddle = rows - 1 - row  # 0 = fileira mais perto da raquete
+        if from_paddle < boundary_1:
             lives = 1
-        elif row < boundary_2:
+        elif from_paddle < boundary_2:
             lives = 2
         else:
             lives = 3  # maximo de 3 toques de vida, fixo, independente do nivel
@@ -495,6 +498,48 @@ def draw_retro_background(surf, now_ms):
         surf.blit(dot, (x, y))
 
 
+_game_bg_cache = None
+
+
+def _build_game_starfield():
+    """Fundo da tela de JOGO: so ceu noturno em gradiente + estrelas fixas,
+    sem montanha/skyline (que atrapalhariam a leitura dos tijolos). Fica em
+    cache - a posicao das estrelas e fixa, so o brilho delas pisca depois."""
+    bg = pygame.Surface((WIDTH, HEIGHT))
+    top_color = (6, 8, 28)
+    bottom_color = (0, 0, 6)
+    for y in range(HEIGHT):
+        t = y / HEIGHT
+        color = tuple(int(top_color[i] * (1 - t) + bottom_color[i] * t) for i in range(3))
+        pygame.draw.line(bg, color, (0, y), (WIDTH, y))
+
+    rng = random.Random(99)
+    stars = []
+    for _ in range(140):
+        x = rng.randint(0, WIDTH)
+        y = rng.randint(0, HEIGHT)
+        size = rng.choice([1, 1, 1, 2])
+        base_bright = rng.randint(120, 220)
+        pygame.draw.rect(bg, (base_bright, base_bright, min(255, base_bright + 25)), (x, y, size, size))
+        if rng.random() < 0.18:
+            stars.append((x, y, size, rng.uniform(0, 6.28)))
+    return bg, stars
+
+
+def draw_starry_background(surf, now_ms):
+    global _game_bg_cache
+    if _game_bg_cache is None:
+        _game_bg_cache = _build_game_starfield()
+    bg, twinkle_stars = _game_bg_cache
+    surf.blit(bg, (0, 0))
+    t = now_ms / 1000.0
+    for x, y, size, phase in twinkle_stars:
+        tw = (math.sin(t * 2.2 + phase) + 1) / 2
+        glow = pygame.Surface((size + 2, size + 2), pygame.SRCALPHA)
+        glow.fill((255, 255, 255, int(90 + 160 * tw)))
+        surf.blit(glow, (x, y))
+
+
 def draw_menu(surf, now_ms, selected):
     draw_retro_background(surf, now_ms)
     draw_pulsing_title(surf, now_ms, (WIDTH // 2, 120))
@@ -566,12 +611,44 @@ def draw_level_complete(surf, level):
 
 
 MENU_OPTIONS = ["INICIAR JOGO", "CREDITOS", "SAIR"]
+PAUSE_OPTIONS = ["CONTINUAR", "VOLUME", "REINICIAR", "MENU INICIAL"]
+
+
+def draw_pause_menu(surf, now_ms, selected, volume):
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 185))
+    surf.blit(overlay, (0, 0))
+
+    title = big_font.render("PAUSADO", True, (255, 230, 60))
+    surf.blit(title, (WIDTH // 2 - title.get_width() // 2, 120))
+
+    option_y = 230
+    spacing = 48
+    for i, option in enumerate(PAUSE_OPTIONS):
+        is_sel = i == selected
+        color = (255, 230, 60) if is_sel else (210, 210, 220)
+        if option == "VOLUME":
+            pct = int(round(volume * 100))
+            label = f"< VOLUME: {pct}% >" if is_sel else f"VOLUME: {pct}%"
+        else:
+            label = f"> {option} <" if is_sel else option
+        rendered = menu_hint_font.render(label, True, color)
+        surf.blit(rendered, (WIDTH // 2 - rendered.get_width() // 2, option_y + i * spacing))
+
+    hint = menu_font.render("P / ESC continua    SETAS navega    ESPACO confirma", True, (170, 170, 185))
+    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, option_y + len(PAUSE_OPTIONS) * spacing + 20))
 
 
 def main():
+    global sound_volume
     state = "menu"  # "menu" ou "playing"
     menu_selected = 0
     menu_view = "main"  # "main" ou "credits"
+
+    paused = False
+    pause_selected = 0
+    pause_accum_ms = 0  # total de ms "descontados" do relogio por causa das pausas
+    frozen_now = 0  # valor de 'now' congelado no instante em que pausou
 
     paddle = Paddle()
     balls = [Ball()]
@@ -597,6 +674,7 @@ def main():
         nonlocal paddle, balls, bricks, particles, powerups, score, lives, shake
         nonlocal game_over, won, paddle_wide_until, slow_until, game_start_ticks, elapsed_ms
         nonlocal level, transitioning, level_transition_until
+        nonlocal paused, pause_selected, pause_accum_ms, frozen_now
         paddle = Paddle()
         balls = [Ball()]
         level = 1
@@ -614,6 +692,10 @@ def main():
         slow_until = 0
         game_start_ticks = pygame.time.get_ticks()
         elapsed_ms = 0
+        paused = False
+        pause_selected = 0
+        pause_accum_ms = 0
+        frozen_now = 0
 
     while True:
         for event in pygame.event.get():
@@ -645,19 +727,57 @@ def main():
                     state = "menu"
                     menu_view = "main"
                     menu_selected = 0
+                elif event.key in (pygame.K_p, pygame.K_ESCAPE) and not game_over and not won and not transitioning:
+                    t = pygame.time.get_ticks()
+                    if not paused:
+                        paused = True
+                        pause_selected = 0
+                        frozen_now = t - pause_accum_ms
+                    else:
+                        paused = False
+                        pause_accum_ms = t - frozen_now
+                elif paused:
+                    if event.key in (pygame.K_UP, pygame.K_w):
+                        pause_selected = (pause_selected - 1) % len(PAUSE_OPTIONS)
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        pause_selected = (pause_selected + 1) % len(PAUSE_OPTIONS)
+                    elif event.key in (pygame.K_LEFT, pygame.K_a) and PAUSE_OPTIONS[pause_selected] == "VOLUME":
+                        sound_volume = max(0.0, round(sound_volume - 0.1, 2))
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d) and PAUSE_OPTIONS[pause_selected] == "VOLUME":
+                        sound_volume = min(1.0, round(sound_volume + 0.1, 2))
+                    elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                        choice = PAUSE_OPTIONS[pause_selected]
+                        if choice == "CONTINUAR":
+                            t = pygame.time.get_ticks()
+                            paused = False
+                            pause_accum_ms = t - frozen_now
+                        elif choice == "REINICIAR":
+                            reset_game()
+                        elif choice == "MENU INICIAL":
+                            reset_game()
+                            state = "menu"
+                            menu_view = "main"
+                            menu_selected = 0
                 elif not game_over and not won and not transitioning:
                     direction = None
+                    launch_pressed = False
                     if event.key in (pygame.K_LEFT, pygame.K_a):
                         direction = -1
+                        launch_pressed = True
                     elif event.key in (pygame.K_RIGHT, pygame.K_d):
                         direction = 1
-                    if direction is not None:
+                        launch_pressed = True
+                    elif event.key == pygame.K_SPACE:
+                        launch_pressed = True
+                    if launch_pressed:
                         for b in balls:
                             if b.stuck:
                                 b.launch(direction)
 
         keys = pygame.key.get_pressed()
-        now = pygame.time.get_ticks()
+        # enquanto pausado, 'now' fica congelado no valor de quando pausou -
+        # assim nenhum cronometro (power-up, nivel, partida) avanca escondido
+        now = frozen_now if paused else (pygame.time.get_ticks() - pause_accum_ms)
 
         # expira a transicao de "nivel completo" e avanca pro proximo nivel
         if state == "playing" and transitioning and now >= level_transition_until:
@@ -670,7 +790,7 @@ def main():
             paddle_wide_until = 0
             slow_until = 0
 
-        if state == "playing" and not game_over and not won and not transitioning:
+        if state == "playing" and not game_over and not won and not transitioning and not paused:
             elapsed_ms = now - game_start_ticks
 
             paddle.update(keys)
@@ -782,7 +902,6 @@ def main():
 
         screen.fill(BLACK)
         draw_surf = pygame.Surface((WIDTH, HEIGHT))
-        draw_surf.fill(BLACK)
 
         if state == "menu":
             if menu_view == "credits":
@@ -790,6 +909,7 @@ def main():
             else:
                 draw_menu(draw_surf, now, menu_selected)
         else:
+            draw_starry_background(draw_surf, now)
             for brick in bricks:
                 brick.draw(draw_surf)
             paddle.draw(draw_surf)
@@ -830,6 +950,9 @@ def main():
                 draw_end_message(draw_surf, "VOCE VENCEU!", (120, 230, 90))
                 level_info = font.render(f"Nivel final alcancado: {level}", True, WHITE)
                 draw_surf.blit(level_info, (WIDTH // 2 - level_info.get_width() // 2, HEIGHT // 2 + 60))
+
+            if paused:
+                draw_pause_menu(draw_surf, now, pause_selected, sound_volume)
 
         screen.blit(draw_surf, (offset_x, offset_y))
         pygame.display.flip()
