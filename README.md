@@ -8,7 +8,7 @@ Projeto desenvolvido para o trabalho **AV2 - Linguagens** (Uniasselvi).
 
 ```bash
 pip install pygame numpy
-python breakout.py
+python main.py
 ```
 
 - **Setas (← →)** ou **A / D**: move a raquete
@@ -37,7 +37,15 @@ python breakout.py
 
 ## Estrutura do código
 
-- **Classes**: `Paddle`, `Ball`, `Brick`, `Particle`, `PowerUp`
-- **Áudio**: `init_audio()` / `play_sound()` — geram e tocam os efeitos sonoros
-- **Funções de desenho**: `draw_menu`, `draw_pulsing_title`, `draw_powerup_timer`, `draw_end_message`, `draw_level_complete`
-- **`main()`**: loop principal do jogo, com máquina de estados (`menu` / `playing`) e as flags de `game_over`, `won` e `transitioning` (entre níveis)
+O projeto é dividido em módulos, cada um com uma responsabilidade:
+
+| Arquivo | Conteúdo |
+|---|---|
+| `main.py` | Ponto de entrada (`python main.py`) — só chama `game.main()`. |
+| `game.py` | Loop principal: inicializa o pygame/janela, e contém `main()` com a máquina de estados (`menu` / `playing`), eventos de teclado e a física por frame. |
+| `entities.py` | Classes de jogo: `Paddle`, `Ball`, `Projectile`, `Brick`, `Particle`, `PowerUp`, `BonusCoin`, e as funções que montam o grid de tijolos (`make_bricks`) e a grade de moedas bônus (`make_bonus_coins`). |
+| `ui.py` | Todas as telas e elementos visuais: menus, créditos, ranking, overlays de pausa/fim de jogo/transição de nível, fundos e o ícone da janela. |
+| `audio.py` | `init_audio()` / `play_sound()` — geram e tocam os efeitos sonoros via `numpy` + `pygame.sndarray`. |
+| `leaderboard.py` | Ranking online (Firebase Realtime Database): perfil local do jogador, verificação de qualificação, envio/atualização de pontuação — tudo em threads separadas, sem travar o jogo. |
+| `constants.py` | Constantes de tuning (cores, tamanhos, durações de power-up, etc.), sem nenhuma lógica. |
+| `fonts.py` | Fontes do pygame compartilhadas entre `entities.py` e `ui.py`. |
