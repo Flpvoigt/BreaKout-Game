@@ -4,15 +4,17 @@ import random
 import pygame
 
 import audio
+import player_profile as profile
+import skins
 from fonts import powerup_font
 from constants import (
-    WIDTH, HEIGHT, BLACK, PADDLE_COLOR, BALL_COLOR, BRICK_COLORS,
+    WIDTH, HEIGHT, BLACK, BRICK_COLORS,
     POWERUP_FALL_SPEED, POWERUP_COLORS, CANNON_PROJECTILE_SPEED, LEVEL_PATTERNS,
 )
 
 __all__ = [
-    "Paddle", "Ball", "spawn_extra_ball", "Projectile", "Brick", "Particle",
-    "PowerUp", "BonusCoin", "make_bonus_coins", "make_bricks",
+    "Paddle", "Ball", "criar_bola_extra", "Projectile", "Brick", "Particle",
+    "PowerUp", "BonusCoin", "criar_moedas_bonus", "criar_tijolos",
 ]
 
 
@@ -24,18 +26,19 @@ class Paddle:
         self.x = WIDTH // 2 - self.width // 2
         self.y = HEIGHT - 40
         self.speed = 9
+        self.skin = profile.obter_skin_raquete_equipada()
 
-    def rect(self):
+    def retangulo(self):
         return pygame.Rect(self.x, self.y, self.width, self.height)
 
-    def update(self, keys):
+    def atualizar(self, keys):
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
             self.x -= self.speed
         if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
             self.x += self.speed
         self.x = max(0, min(WIDTH - self.width, self.x))
 
-    def set_width(self, new_width):
+    def definir_largura(self, new_width):
         """Change width while keeping the paddle centered on the same spot."""
         if new_width == self.width:
             return
@@ -44,17 +47,18 @@ class Paddle:
         self.x = int(center - self.width / 2)
         self.x = max(0, min(WIDTH - self.width, self.x))
 
-    def draw(self, surf):
-        pygame.draw.rect(surf, PADDLE_COLOR, self.rect(), border_radius=8)
+    def desenhar(self, surf, now_ms=0):
+        skins.desenhar_raquete(surf, self.retangulo(), self.skin, now_ms)
 
 
 class Ball:
     def __init__(self):
         self.radius = 9
         self.trail = []
-        self.reset()
+        self.skin = profile.obter_skin_bola_equipada()
+        self.reiniciar()
 
-    def reset(self):
+    def reiniciar(self):
         """Ball is born/reborn stuck on top of the paddle, not moving."""
         self.x = WIDTH // 2
         self.y = HEIGHT - 60
@@ -63,7 +67,7 @@ class Ball:
         self.stuck = True
         self.trail = []
 
-    def launch(self, direction=None):
+    def lancar(self, direction=None):
         if not self.stuck:
             return
         self.stuck = False
@@ -73,16 +77,16 @@ class Ball:
             self.vx = random.choice([-5, 5])
         self.vy = -5
 
-    def stick_to(self, paddle):
+    def grudar_em(self, paddle):
         self.x = paddle.x + paddle.width / 2
         self.y = paddle.y - self.radius - 1
         self.trail = []
 
-    def rect(self):
+    def retangulo(self):
         return pygame.Rect(self.x - self.radius, self.y - self.radius,
                             self.radius * 2, self.radius * 2)
 
-    def update(self, speed_factor=1.0):
+    def atualizar(self, speed_factor=1.0):
         if self.stuck:
             return
         self.trail.append((self.x, self.y))
@@ -93,23 +97,16 @@ class Ball:
 
         if self.x - self.radius <= 0 or self.x + self.radius >= WIDTH:
             self.vx *= -1
-            audio.play_sound("hit_wall")
+            audio.tocar_som("hit_wall")
         if self.y - self.radius <= 0:
             self.vy *= -1
-            audio.play_sound("hit_wall")
+            audio.tocar_som("hit_wall")
 
-    def draw(self, surf):
-        for i, (tx, ty) in enumerate(self.trail):
-            alpha = int(255 * (i / len(self.trail)) * 0.5)
-            r = int(self.radius * (i / len(self.trail)))
-            if r > 0:
-                s = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
-                pygame.draw.circle(s, (*BALL_COLOR, alpha), (r, r), r)
-                surf.blit(s, (tx - r, ty - r))
-        pygame.draw.circle(surf, BALL_COLOR, (int(self.x), int(self.y)), self.radius)
+    def desenhar(self, surf, now_ms=0):
+        skins.desenhar_bola(surf, self.x, self.y, self.radius, self.skin, now_ms, self.trail)
 
 
-def spawn_extra_ball(source, vx_offset):
+def criar_bola_extra(source, vx_offset):
     nb = Ball()
     nb.x = source.x
     nb.y = source.y
@@ -137,15 +134,15 @@ class Projectile:
         self.h = 12
         self.vy = -CANNON_PROJECTILE_SPEED
 
-    def rect(self):
+    def retangulo(self):
         return pygame.Rect(int(self.x - self.w / 2), int(self.y - self.h),
                             self.w, self.h)
 
-    def update(self):
+    def atualizar(self):
         self.y += self.vy
 
-    def draw(self, surf):
-        pygame.draw.rect(surf, (255, 140, 60), self.rect(), border_radius=2)
+    def desenhar(self, surf):
+        pygame.draw.rect(surf, (255, 140, 60), self.retangulo(), border_radius=2)
 
 
 class Brick:
@@ -157,7 +154,7 @@ class Brick:
         self.lives = self.max_lives
         self.alive = True
 
-    def hit(self):
+    def atingir(self):
         """Aplica uma batida no tijolo. Retorna True se ele quebrou de vez
         nessa batida (lives chegou a 0), False se apanhou mas sobreviveu."""
         if not self.alive:
@@ -171,7 +168,7 @@ class Brick:
         self.color = tuple(max(0, int(c * factor)) for c in self.base_color)
         return False
 
-    def draw(self, surf):
+    def desenhar(self, surf):
         if not self.alive:
             return
         pygame.draw.rect(surf, self.color, self.rect, border_radius=4)
@@ -201,13 +198,13 @@ class Particle:
         self.max_life = self.life
         self.size = random.randint(2, 5)
 
-    def update(self):
+    def atualizar(self):
         self.x += self.vx
         self.y += self.vy
         self.vy += 0.15
         self.life -= 1
 
-    def draw(self, surf):
+    def desenhar(self, surf):
         if self.life > 0:
             alpha = int(255 * (self.life / self.max_life))
             s = pygame.Surface((self.size * 2, self.size * 2), pygame.SRCALPHA)
@@ -227,14 +224,14 @@ class PowerUp:
         self.h = PowerUp.SIZE
         self.color = POWERUP_COLORS[kind]
 
-    def rect(self):
+    def retangulo(self):
         return pygame.Rect(int(self.x - self.w / 2), int(self.y - self.h / 2), self.w, self.h)
 
-    def update(self):
+    def atualizar(self):
         self.y += self.vy
 
-    def draw(self, surf):
-        r = self.rect()
+    def desenhar(self, surf):
+        r = self.retangulo()
         pygame.draw.rect(surf, self.color, r, border_radius=6)
         pygame.draw.rect(surf, BLACK, r, width=2, border_radius=6)
         label = powerup_font.render(self.kind, True, BLACK)
@@ -250,18 +247,18 @@ class BonusCoin:
         self.radius = 12
         self.alive = True
 
-    def rect(self):
+    def retangulo(self):
         return pygame.Rect(int(self.x - self.radius), int(self.y - self.radius),
                             self.radius * 2, self.radius * 2)
 
-    def draw(self, surf):
+    def desenhar(self, surf):
         if not self.alive:
             return
         pygame.draw.circle(surf, (255, 215, 0), (int(self.x), int(self.y)), self.radius)
         pygame.draw.circle(surf, (120, 90, 0), (int(self.x), int(self.y)), self.radius, width=2)
 
 
-def make_bonus_coins():
+def criar_moedas_bonus():
     """Grade de moedas da rodada bonus - sem tijolos, so pontos extras."""
     coins = []
     rows, cols = 5, 9
@@ -276,7 +273,7 @@ def make_bonus_coins():
     return coins
 
 
-def _pattern_present(pattern, row, col, rows, cols):
+def _padrao_presente(pattern, row, col, rows, cols):
     """Decide se a celula (row, col) do grid tem tijolo, de acordo com o padrao
     do nivel. Padrao 0 e a grade classica cheia (sempre usada no nivel 1).
     Os demais abrem vãos diferentes a cada rotacao de nivel, pra nao repetir
@@ -299,7 +296,7 @@ def _pattern_present(pattern, row, col, rows, cols):
     return True
 
 
-def make_bricks(level=1):
+def criar_tijolos(level=1):
     """Monta o grid de tijolos. A fileira mais perto da raquete (a primeira que
     a bola encontra ao jogar) quebra com 1 batida; subindo dai pra cima as
     fileiras exigem mais batidas, ate um maximo de 3. Conforme o nivel sobe, o
@@ -332,7 +329,7 @@ def make_bricks(level=1):
         else:
             lives = 3  # maximo de 3 toques de vida, fixo, independente do nivel
         for col in range(cols):
-            if not _pattern_present(pattern, row, col, rows, cols):
+            if not _padrao_presente(pattern, row, col, rows, cols):
                 continue
             x = offset_side + col * (brick_w + padding)
             y = offset_top + row * (brick_h + padding)

@@ -19,9 +19,9 @@ SOUNDS = {}
 AUDIO_SAMPLE_RATE = 44100
 
 
-def _tone_array(freq, duration_ms, volume=0.5, wave="sine", sample_rate=AUDIO_SAMPLE_RATE):
+def _gerar_tom(freq, duration_ms, volume=0.5, wave="sine", sample_rate=AUDIO_SAMPLE_RATE):
     """Gera um array numpy PCM16 mono curto com um tom simples (senoidal ou quadrada).
-    So e chamada a partir de init_audio() apos a checagem `if np is None: return`,
+    So e chamada a partir de iniciar_audio() apos a checagem `if np is None: return`,
     entao o numpy sempre esta disponivel aqui - o assert so informa isso ao Pylance."""
     assert np is not None
     n_samples = max(1, int(sample_rate * duration_ms / 1000))
@@ -39,14 +39,14 @@ def _tone_array(freq, duration_ms, volume=0.5, wave="sine", sample_rate=AUDIO_SA
     return (data * 32767).astype(np.int16)
 
 
-def _sequence_array(notes):
+def _gerar_sequencia(notes):
     """Concatena varias notas (freq, duration_ms, volume, wave) num unico array."""
     assert np is not None
-    pieces = [_tone_array(*note) for note in notes]
+    pieces = [_gerar_tom(*note) for note in notes]
     return np.concatenate(pieces)
 
 
-def init_audio():
+def iniciar_audio():
     """Inicializa o mixer e constroi cada efeito sonoro na hora, via numpy.
     Se nao houver numpy ou dispositivo de audio disponivel, desativa o som
     silenciosamente (o jogo continua funcionando sem efeitos sonoros)."""
@@ -61,29 +61,29 @@ def init_audio():
         sound_enabled = False
         return
     try:
-        SOUNDS["hit_paddle"] = pygame.sndarray.make_sound(_tone_array(220, 70, 0.45, "square"))
-        SOUNDS["hit_wall"] = pygame.sndarray.make_sound(_tone_array(150, 60, 0.35, "sine"))
-        SOUNDS["brick_hit"] = pygame.sndarray.make_sound(_tone_array(320, 70, 0.35, "sine"))
-        SOUNDS["brick_destroy"] = pygame.sndarray.make_sound(_sequence_array([
+        SOUNDS["hit_paddle"] = pygame.sndarray.make_sound(_gerar_tom(220, 70, 0.45, "square"))
+        SOUNDS["hit_wall"] = pygame.sndarray.make_sound(_gerar_tom(150, 60, 0.35, "sine"))
+        SOUNDS["brick_hit"] = pygame.sndarray.make_sound(_gerar_tom(320, 70, 0.35, "sine"))
+        SOUNDS["brick_destroy"] = pygame.sndarray.make_sound(_gerar_sequencia([
             (660, 50, 0.45, "square"), (990, 90, 0.5, "square"),
         ]))
-        SOUNDS["powerup"] = pygame.sndarray.make_sound(_sequence_array([
+        SOUNDS["powerup"] = pygame.sndarray.make_sound(_gerar_sequencia([
             (500, 60, 0.4, "sine"), (750, 100, 0.45, "sine"),
         ]))
-        SOUNDS["lose_life"] = pygame.sndarray.make_sound(_sequence_array([
+        SOUNDS["lose_life"] = pygame.sndarray.make_sound(_gerar_sequencia([
             (400, 90, 0.4, "sine"), (240, 140, 0.4, "sine"),
         ]))
-        SOUNDS["game_over"] = pygame.sndarray.make_sound(_sequence_array([
+        SOUNDS["game_over"] = pygame.sndarray.make_sound(_gerar_sequencia([
             (300, 150, 0.45, "square"), (220, 150, 0.45, "square"), (150, 220, 0.5, "square"),
         ]))
-        SOUNDS["victory"] = pygame.sndarray.make_sound(_sequence_array([
+        SOUNDS["victory"] = pygame.sndarray.make_sound(_gerar_sequencia([
             (523, 100, 0.45, "sine"), (659, 100, 0.45, "sine"), (784, 160, 0.5, "sine"),
         ]))
-        SOUNDS["cannon_fire"] = pygame.sndarray.make_sound(_tone_array(200, 45, 0.3, "square"))
-        SOUNDS["coin"] = pygame.sndarray.make_sound(_sequence_array([
+        SOUNDS["cannon_fire"] = pygame.sndarray.make_sound(_gerar_tom(200, 45, 0.3, "square"))
+        SOUNDS["coin"] = pygame.sndarray.make_sound(_gerar_sequencia([
             (880, 40, 0.4, "sine"), (1175, 70, 0.45, "sine"),
         ]))
-        SOUNDS["buy_life"] = pygame.sndarray.make_sound(_sequence_array([
+        SOUNDS["buy_life"] = pygame.sndarray.make_sound(_gerar_sequencia([
             (440, 80, 0.45, "sine"), (660, 80, 0.45, "sine"), (880, 120, 0.5, "sine"),
         ]))
     except Exception:
@@ -94,7 +94,7 @@ _last_played_ms = {}
 SOUND_THROTTLE_MS = 40  # evita "cacho" de som quando varios eventos batem no mesmo frame
 
 
-def play_sound(name):
+def tocar_som(name):
     if not sound_enabled or sound_volume <= 0:
         return
     now = pygame.time.get_ticks()

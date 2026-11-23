@@ -5,19 +5,21 @@ import random
 import pygame
 
 import leaderboard
+import player_profile as profile
+import skins
 from fonts import font, big_font, status_font, title_font, menu_font, menu_hint_font
 from constants import WIDTH, HEIGHT, WHITE, BLACK, POWERUP_COLORS, MENU_OPTIONS, PAUSE_OPTIONS
 
 __all__ = [
-    "build_icon_surface", "format_time", "draw_cannons",
-    "draw_retro_background", "draw_starry_background",
-    "draw_menu", "draw_credits", "draw_ranking",
-    "draw_powerup_timer", "draw_name_entry", "draw_end_message",
-    "draw_level_complete", "draw_pause_menu",
+    "criar_superficie_icone", "formatar_tempo", "desenhar_canhoes",
+    "desenhar_fundo_retro", "desenhar_fundo_estrelado",
+    "desenhar_menu", "desenhar_creditos", "desenhar_ranking",
+    "desenhar_cronometro_powerup", "desenhar_entrada_nome", "desenhar_mensagem_fim",
+    "desenhar_nivel_completo", "desenhar_menu_pausa", "desenhar_loja", "desenhar_oferta_pocao",
 ]
 
 
-def build_icon_surface(size=64):
+def criar_superficie_icone(size=64):
     """Icone da janela/barra de tarefas: mini-cena do jogo (tijolos + bola +
     raquete), no lugar do mascote padrao do Pygame."""
     icon = pygame.Surface((size, size), pygame.SRCALPHA)
@@ -44,14 +46,14 @@ def build_icon_surface(size=64):
     return icon
 
 
-def format_time(ms):
+def formatar_tempo(ms):
     total_seconds = ms // 1000
     minutes = total_seconds // 60
     seconds = total_seconds % 60
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def draw_cannons(surf, paddle):
+def desenhar_canhoes(surf, paddle):
     """Desenha os dois canhoes nas pontas da raquete enquanto o power-up C esta ativo."""
     turret_w, turret_h = 10, 16
     left = pygame.Rect(int(paddle.x) - 2, paddle.y - turret_h + 4, turret_w, turret_h)
@@ -61,7 +63,7 @@ def draw_cannons(surf, paddle):
         pygame.draw.rect(surf, BLACK, r, width=2, border_radius=3)
 
 
-def draw_pulsing_title(surf, now_ms, center):
+def desenhar_titulo_pulsante(surf, now_ms, center):
     """Desenha 'BREAKOUT' com sombra + brilho suave pulsante, sem duplicar/desalinhar
     o texto (evita o artefato de usar dois rotozoom com escalas diferentes)."""
     t = now_ms / 1000.0
@@ -85,7 +87,7 @@ def draw_pulsing_title(surf, now_ms, center):
 _menu_bg_cache = None
 
 
-def _build_menu_background():
+def _criar_fundo_menu():
     """Monta (uma unica vez) o cenario retro 8-bit: ceu em gradiente, montanhas
     e skyline de cidade com janelas acesas. Fica em cache porque usa posicoes
     aleatorias fixas - gerar de novo a cada frame faria tudo "piscar" trocando
@@ -108,7 +110,7 @@ def _build_menu_background():
         size = rng.choice([1, 1, 1, 2])
         pygame.draw.rect(bg, (200, 200, 235), (x, y, size, size))
 
-    def jagged_mountain(base_y, amplitude, color, seed, step=40):
+    def montanha_irregular(base_y, amplitude, color, seed, step=40):
         rng2 = random.Random(seed)
         pts = [(0, horizon_y)]
         x = 0
@@ -118,8 +120,8 @@ def _build_menu_background():
         pts.append((WIDTH, horizon_y))
         pygame.draw.polygon(bg, color, pts)
 
-    jagged_mountain(horizon_y - 40, 70, (26, 20, 58), 1)
-    jagged_mountain(horizon_y - 8, 50, (16, 13, 42), 2)
+    montanha_irregular(horizon_y - 40, 70, (26, 20, 58), 1)
+    montanha_irregular(horizon_y - 8, 50, (16, 13, 42), 2)
     pygame.draw.rect(bg, (45, 65, 150), (0, horizon_y, WIDTH, 3))
 
     rng3 = random.Random(7)
@@ -143,10 +145,10 @@ def _build_menu_background():
     return bg
 
 
-def draw_retro_background(surf, now_ms):
+def desenhar_fundo_retro(surf, now_ms):
     global _menu_bg_cache
     if _menu_bg_cache is None:
-        _menu_bg_cache = _build_menu_background()
+        _menu_bg_cache = _criar_fundo_menu()
     surf.blit(_menu_bg_cache, (0, 0))
     t = now_ms / 1000.0
     for i in range(5):
@@ -161,7 +163,7 @@ def draw_retro_background(surf, now_ms):
 _game_bg_cache = None
 
 
-def _build_game_starfield():
+def _criar_ceu_estrelado_jogo():
     """Fundo da tela de JOGO: so ceu noturno em gradiente + estrelas fixas,
     sem montanha/skyline (que atrapalhariam a leitura dos tijolos). Fica em
     cache - a posicao das estrelas e fixa, so o brilho delas pisca depois."""
@@ -186,10 +188,10 @@ def _build_game_starfield():
     return bg, stars
 
 
-def draw_starry_background(surf, now_ms):
+def desenhar_fundo_estrelado(surf, now_ms):
     global _game_bg_cache
     if _game_bg_cache is None:
-        _game_bg_cache = _build_game_starfield()
+        _game_bg_cache = _criar_ceu_estrelado_jogo()
     bg, twinkle_stars = _game_bg_cache
     surf.blit(bg, (0, 0))
     t = now_ms / 1000.0
@@ -200,9 +202,62 @@ def draw_starry_background(surf, now_ms):
         surf.blit(glow, (x, y))
 
 
-def draw_menu(surf, now_ms, selected):
-    draw_retro_background(surf, now_ms)
-    draw_pulsing_title(surf, now_ms, (WIDTH // 2, 120))
+_LOJA_ICON_W, _LOJA_ICON_H = 26, 28
+
+
+def obter_retangulo_icone_loja():
+    """Retangulo clicavel do mini-icone da loja, canto superior esquerdo do menu."""
+    return pygame.Rect(14, 14, _LOJA_ICON_W, _LOJA_ICON_H)
+
+
+def _renderizar_superficie_icone_loja():
+    """Mini barraquinha (toldo listrado + balcao com uma moeda), desenhada numa
+    surface propria pra poder ser escalada (zoom no hover) sem precisar de
+    nenhuma caixa/contorno ao redor."""
+    w, h = _LOJA_ICON_W, _LOJA_ICON_H
+    icon = pygame.Surface((w, h), pygame.SRCALPHA)
+
+    awning_colors = [(0, 200, 230), (235, 235, 240)]
+    stripe_w = w / 4
+    awning_bottom = 9
+    for i in range(4):
+        c = awning_colors[i % 2]
+        x0 = i * stripe_w
+        pts = [(x0, 0), (x0 + stripe_w, 0), (x0 + stripe_w + 2, awning_bottom), (x0 - 2, awning_bottom)]
+        pygame.draw.polygon(icon, c, pts)
+    pygame.draw.line(icon, BLACK, (-2, awning_bottom), (w + 2, awning_bottom), 1)
+
+    counter_rect = pygame.Rect(2, awning_bottom + 1, w - 4, h - awning_bottom - 1)
+    pygame.draw.rect(icon, (110, 75, 45), counter_rect, border_radius=2)
+    pygame.draw.rect(icon, BLACK, counter_rect, width=1, border_radius=2)
+
+    coin_pos = (counter_rect.centerx, counter_rect.centery + 1)
+    pygame.draw.circle(icon, (255, 215, 0), coin_pos, 3)
+    pygame.draw.circle(icon, BLACK, coin_pos, 3, width=1)
+    return icon
+
+
+def desenhar_icone_loja(surf, now_ms, hover=False):
+    """So um icone pequeno no canto - ao passar o mouse, da um zoom bem leve
+    nele mesmo (sem criar nenhuma caixa/contorno ao redor)."""
+    rect = obter_retangulo_icone_loja()
+    icon = _renderizar_superficie_icone_loja()
+    if hover:
+        icon = pygame.transform.smoothscale(icon, (int(_LOJA_ICON_W * 1.18), int(_LOJA_ICON_H * 1.18)))
+    draw_rect = icon.get_rect(center=rect.center)
+    surf.blit(icon, draw_rect.topleft)
+
+    if hover:
+        label = status_font.render("Loja", True, WHITE)
+        label_bg = pygame.Rect(0, 0, label.get_width() + 8, label.get_height() + 4)
+        label_bg.midleft = (rect.right + 8, rect.centery)
+        pygame.draw.rect(surf, (20, 18, 30), label_bg, border_radius=5)
+        surf.blit(label, (label_bg.x + 4, label_bg.y + 2))
+
+
+def desenhar_menu(surf, now_ms, selected, loja_hover=False):
+    desenhar_fundo_retro(surf, now_ms)
+    desenhar_titulo_pulsante(surf, now_ms, (WIDTH // 2, 120))
 
     option_y = 300
     spacing = 46
@@ -216,9 +271,14 @@ def draw_menu(surf, now_ms, selected):
     hint = menu_font.render("Use as SETAS para escolher e ESPACO para confirmar", True, (170, 170, 185))
     surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, option_y + len(MENU_OPTIONS) * spacing + 24))
 
+    coins_text = menu_font.render(f"Moedas: {profile.obter_moedas()}", True, (255, 215, 0))
+    surf.blit(coins_text, (WIDTH // 2 - coins_text.get_width() // 2, 180))
 
-def draw_credits(surf, now_ms):
-    draw_retro_background(surf, now_ms)
+    desenhar_icone_loja(surf, now_ms, loja_hover)
+
+
+def desenhar_creditos(surf, now_ms):
+    desenhar_fundo_retro(surf, now_ms)
     title = big_font.render("CREDITOS", True, (0, 220, 255))
     surf.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
 
@@ -230,9 +290,9 @@ def draw_credits(surf, now_ms):
         "",
         "Controles: SETAS ou A / D para mover a raquete",
         "ESPACO lanca a bola e confirma opcoes do menu",
-        "V troca pontos por uma vida extra (se ja perdeu alguma)",
         "",
         "W = raquete larga   M = multi-bola   S = bola lenta   C = canhoes",
+        "Colete moedas na rodada bonus e gaste na LOJA do menu principal",
         "",
         "Trabalho AV2 - Linguagens - Uniasselvi",
     ]
@@ -256,12 +316,12 @@ RANK_TAGS = {
 }
 
 
-def draw_ranking(surf, now_ms):
-    draw_retro_background(surf, now_ms)
+def desenhar_ranking(surf, now_ms):
+    desenhar_fundo_retro(surf, now_ms)
     title = big_font.render("TOP PLACARES", True, (0, 220, 255))
     surf.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
 
-    status = leaderboard.get_leaderboard_status()
+    status = leaderboard.obter_status_ranking()
     row_x = WIDTH // 2 - 260
     y = 150
     if status in ("idle", "loading"):
@@ -271,7 +331,7 @@ def draw_ranking(surf, now_ms):
         msg = menu_font.render("Nao foi possivel carregar (sem internet?)", True, (255, 120, 120))
         surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, y))
     else:
-        entries = leaderboard.get_leaderboard_entries()
+        entries = leaderboard.obter_entradas_ranking()
         if not entries:
             msg = menu_font.render("Nenhuma pontuacao registrada ainda.", True, WHITE)
             surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, y))
@@ -289,7 +349,7 @@ def draw_ranking(surf, now_ms):
     hint = menu_font.render("Pressione ESPACO ou ESC para voltar", True, (120, 230, 90))
     surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 80))
 
-    if leaderboard.get_player_name():
+    if profile.obter_nome_jogador():
         rename_hint = menu_font.render("N para mudar seu nome no ranking", True, (170, 170, 185))
         surf.blit(rename_hint, (WIDTH // 2 - rename_hint.get_width() // 2, HEIGHT - 54))
 
@@ -298,14 +358,283 @@ def draw_ranking(surf, now_ms):
         "ok": ("Nome atualizado!", (120, 230, 90)),
         "error": ("Falha ao atualizar (sem internet?)", (255, 120, 120)),
     }
-    sub_status = leaderboard.get_rank_submit_status()
+    sub_status = leaderboard.obter_status_envio()
     if sub_status in rename_status_msgs:
         text_line, color_line = rename_status_msgs[sub_status]
         rendered = menu_font.render(text_line, True, color_line)
         surf.blit(rendered, (WIDTH // 2 - rendered.get_width() // 2, HEIGHT - 28))
 
 
-def draw_powerup_timer(surf, label, until_ticks, now, color, y):
+def _quebrar_texto(text, font_obj, max_width):
+    words = text.split(" ")
+    lines = []
+    current = ""
+    for word in words:
+        test = (current + " " + word).strip()
+        if font_obj.size(test)[0] <= max_width:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+_loja_bg_cache = None
+
+
+def _criar_fundo_loja():
+    """Cenario proprio da loja: ceu roxo-noturno + fileira de barracas de
+    feira com toldos listrados. Diferente de proposito do skyline do menu,
+    pra loja parecer um lugar a parte, nao so um menu com uma caixa em cima."""
+    bg = pygame.Surface((WIDTH, HEIGHT))
+    top_color = (24, 14, 36)
+    bottom_color = (8, 4, 14)
+    for y in range(HEIGHT):
+        t = y / HEIGHT
+        color = tuple(int(top_color[i] * (1 - t) + bottom_color[i] * t) for i in range(3))
+        pygame.draw.line(bg, color, (0, y), (WIDTH, y))
+
+    rng = random.Random(55)
+    for _ in range(90):
+        x = rng.randint(0, WIDTH)
+        y = rng.randint(0, HEIGHT - 130)
+        size = rng.choice([1, 1, 2])
+        c = rng.choice([(255, 215, 0), (255, 235, 150), (255, 255, 255)])
+        pygame.draw.rect(bg, c, (x, y, size, size))
+
+    rng2 = random.Random(21)
+    stall_colors = [(150, 50, 50), (50, 90, 150), (60, 140, 70), (150, 110, 40)]
+    stall_top = HEIGHT - 110
+    x = 0
+    while x < WIDTH:
+        w = rng2.randint(70, 110)
+        color = rng2.choice(stall_colors)
+        stripe_w = 10
+        sx = x
+        stripe_idx = 0
+        while sx < x + w:
+            c = color if stripe_idx % 2 == 0 else (245, 240, 230)
+            pygame.draw.polygon(bg, c, [(sx, stall_top), (sx + stripe_w, stall_top),
+                                        (sx + stripe_w + 6, stall_top + 16), (sx - 6 + stripe_w, stall_top + 16)])
+            sx += stripe_w
+            stripe_idx += 1
+        pygame.draw.rect(bg, (40, 30, 35), (x, stall_top + 16, w, HEIGHT - (stall_top + 16)))
+        x += w + 6
+    return bg
+
+
+def desenhar_fundo_loja(surf, now_ms):
+    global _loja_bg_cache
+    if _loja_bg_cache is None:
+        _loja_bg_cache = _criar_fundo_loja()
+    surf.blit(_loja_bg_cache, (0, 0))
+
+
+LOJA_CATEGORIAS = [("bolas", "BOLAS"), ("raquetes", "RAQUETES"), ("pocoes", "POCOES")]
+LOJA_CONTENT_TOP = 150
+
+
+def _desenhar_icone_moeda(surf, cx, cy, r=7):
+    pygame.draw.circle(surf, (255, 215, 0), (cx, cy), r)
+    pygame.draw.circle(surf, (170, 130, 0), (cx, cy), r, width=1)
+
+
+def obter_retangulo_fechar_loja():
+    return pygame.Rect(WIDTH - 54, 18, 36, 36)
+
+
+def obter_retangulos_abas_loja():
+    """Largura de cada aba calculada a partir do texto real (+ preenchimento),
+    pra nunca estourar a caixa independente da fonte do sistema."""
+    pad_x, gap, tab_h, ty = 20, 14, 42, 84
+    widths = [menu_hint_font.size(label)[0] + pad_x * 2 for _, label in LOJA_CATEGORIAS]
+    total_w = sum(widths) + gap * (len(widths) - 1)
+    tx = WIDTH // 2 - total_w // 2
+    rects = {}
+    for (cat_id, _), w in zip(LOJA_CATEGORIAS, widths):
+        rects[cat_id] = pygame.Rect(tx, ty, w, tab_h)
+        tx += w + gap
+    return rects
+
+
+def obter_retangulos_setas_loja():
+    cy = LOJA_CONTENT_TOP + 95
+    left = pygame.Rect(26, cy - 22, 36, 44)
+    right = pygame.Rect(WIDTH - 62, cy - 22, 36, 44)
+    return left, right
+
+
+def _desenhar_botao_seta(surf, rect, direction):
+    pygame.draw.rect(surf, (25, 20, 35), rect, border_radius=8)
+    pygame.draw.rect(surf, (255, 215, 0), rect, width=2, border_radius=8)
+    cx, cy = rect.center
+    size = 8
+    if direction == "left":
+        pts = [(cx + size // 2, cy - size), (cx - size // 2, cy), (cx + size // 2, cy + size)]
+    else:
+        pts = [(cx - size // 2, cy - size), (cx + size // 2, cy), (cx - size // 2, cy + size)]
+    pygame.draw.polygon(surf, (255, 215, 0), pts)
+
+
+def _desenhar_cards_loja(surf, top_y, now_ms, categoria, ordem, catalogo, idx, owned_fn, equipped_fn):
+    n = len(ordem)
+    card_w, card_h = 155, 190
+    gap = 20
+    total_w = card_w * n + gap * (n - 1)
+    start_x = WIDTH // 2 - total_w // 2
+    equipada = equipped_fn()
+
+    for i, skin_id in enumerate(ordem):
+        info = catalogo[skin_id]
+        rect = pygame.Rect(start_x + i * (card_w + gap), top_y, card_w, card_h)
+        is_sel = i == idx
+        is_owned = owned_fn(skin_id)
+        is_equipped = skin_id == equipada
+
+        card_bg = pygame.Surface(rect.size, pygame.SRCALPHA)
+        card_bg.fill((55, 45, 20, 230) if is_sel else (35, 30, 50, 220))
+        surf.blit(card_bg, rect.topleft)
+        border_color = (255, 215, 0) if is_sel else ((120, 230, 90) if is_equipped else (100, 95, 120))
+        pygame.draw.rect(surf, border_color, rect, width=3 if is_sel else 2, border_radius=12)
+
+        preview_cy = rect.y + 56
+        if categoria == "bolas":
+            skins.desenhar_bola(surf, rect.centerx, preview_cy, 24, skin_id, now_ms)
+        else:
+            prect = pygame.Rect(0, 0, 104, 18)
+            prect.center = (rect.centerx, preview_cy)
+            skins.desenhar_raquete(surf, prect, skin_id, now_ms)
+
+        name_rendered = status_font.render(info["nome"], True, WHITE)
+        surf.blit(name_rendered, (rect.centerx - name_rendered.get_width() // 2, rect.y + 100))
+
+        status_y = rect.y + 136
+        if is_equipped:
+            status_rendered = status_font.render("EQUIPADA", True, (120, 230, 90))
+            surf.blit(status_rendered, (rect.centerx - status_rendered.get_width() // 2, rect.y + 130))
+        elif is_owned:
+            status_rendered = status_font.render("COMPRADA", True, (170, 200, 230))
+            surf.blit(status_rendered, (rect.centerx - status_rendered.get_width() // 2, rect.y + 130))
+        else:
+            price_rendered = status_font.render(str(info["preco"]), True, (255, 215, 0))
+            block_w = price_rendered.get_width() + 18
+            block_x = rect.centerx - block_w // 2
+            _desenhar_icone_moeda(surf, block_x + 7, status_y, r=7)
+            surf.blit(price_rendered, (block_x + 18, status_y - price_rendered.get_height() // 2))
+
+        if is_sel:
+            arrow = menu_font.render("^", True, (255, 215, 0))
+            surf.blit(arrow, (rect.centerx - arrow.get_width() // 2, rect.bottom + 2))
+
+
+def _desenhar_card_pocao(surf, top_y, now_ms):
+    card_w, card_h = 340, 320
+    rect = pygame.Rect(0, 0, card_w, card_h)
+    rect.centerx = WIDTH // 2
+    rect.top = top_y
+
+    card_bg = pygame.Surface(rect.size, pygame.SRCALPHA)
+    card_bg.fill((45, 30, 55, 230))
+    surf.blit(card_bg, rect.topleft)
+    pygame.draw.rect(surf, (255, 100, 200), rect, width=3, border_radius=14)
+
+    skins.desenhar_icone_pocao(surf, rect.centerx, rect.y + 68, now_ms, scale=2.0)
+
+    y = rect.y + 122
+    for line in _quebrar_texto(skins.POTION_NOME, menu_font, rect.width - 40):
+        rendered = menu_font.render(line, True, (255, 230, 60))
+        surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, y))
+        y += 26
+
+    y += 10
+    for line in _quebrar_texto(skins.POTION_DESC, menu_font, rect.width - 40):
+        rendered = menu_font.render(line, True, WHITE)
+        surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, y))
+        y += 24
+
+    preco_text = status_font.render(f"{skins.POTION_PRECO} moedas - voce tem {profile.obter_pocoes()}",
+                                     True, (255, 215, 0))
+    surf.blit(preco_text, (rect.centerx - preco_text.get_width() // 2, y + 10))
+
+
+def desenhar_loja(surf, now_ms, categoria, idx, mensagem="", mensagem_until=0):
+    desenhar_fundo_loja(surf, now_ms)
+
+    title = big_font.render("LOJA", True, (255, 215, 0))
+    banner = pygame.Rect(0, 0, title.get_width() + 70, 48)
+    banner.centerx = WIDTH // 2
+    banner.top = 14
+    pygame.draw.rect(surf, (40, 30, 55), banner, border_radius=10)
+    pygame.draw.rect(surf, (255, 215, 0), banner, width=2, border_radius=10)
+    surf.blit(title, (banner.centerx - title.get_width() // 2, banner.centery - title.get_height() // 2))
+
+    coin_text = menu_font.render(str(profile.obter_moedas()), True, (255, 215, 0))
+    coin_badge = pygame.Rect(16, 20, coin_text.get_width() + 46, 36)
+    pygame.draw.rect(surf, (30, 24, 10), coin_badge, border_radius=18)
+    pygame.draw.rect(surf, (255, 215, 0), coin_badge, width=2, border_radius=18)
+    _desenhar_icone_moeda(surf, coin_badge.x + 20, coin_badge.centery)
+    surf.blit(coin_text, (coin_badge.x + 34, coin_badge.centery - coin_text.get_height() // 2))
+
+    close_rect = obter_retangulo_fechar_loja()
+    pygame.draw.circle(surf, (50, 18, 22), close_rect.center, close_rect.width // 2)
+    pygame.draw.circle(surf, (255, 100, 100), close_rect.center, close_rect.width // 2, width=2)
+    x_label = menu_hint_font.render("X", True, (255, 160, 160))
+    surf.blit(x_label, (close_rect.centerx - x_label.get_width() // 2, close_rect.centery - x_label.get_height() // 2))
+
+    tab_rects = obter_retangulos_abas_loja()
+    for cat_id, label in LOJA_CATEGORIAS:
+        rect = tab_rects[cat_id]
+        is_sel = cat_id == categoria
+        bg = (255, 215, 0) if is_sel else (25, 20, 35)
+        pygame.draw.rect(surf, bg, rect, border_radius=10)
+        pygame.draw.rect(surf, BLACK if is_sel else (255, 215, 0), rect, width=2, border_radius=10)
+        color = BLACK if is_sel else (210, 210, 220)
+        rendered = menu_hint_font.render(label, True, color)
+        surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, rect.centery - rendered.get_height() // 2))
+
+    content_top = LOJA_CONTENT_TOP
+    if categoria == "pocoes":
+        _desenhar_card_pocao(surf, content_top, now_ms)
+    else:
+        if categoria == "bolas":
+            ordem, catalogo = skins.BALL_SKIN_ORDER, skins.BALL_SKINS
+            owned_fn, equipped_fn = profile.possui_skin_bola, profile.obter_skin_bola_equipada
+        else:
+            ordem, catalogo = skins.PADDLE_SKIN_ORDER, skins.PADDLE_SKINS
+            owned_fn, equipped_fn = profile.possui_skin_raquete, profile.obter_skin_raquete_equipada
+        _desenhar_cards_loja(surf, content_top, now_ms, categoria, ordem, catalogo, idx, owned_fn, equipped_fn)
+
+        left_arrow, right_arrow = obter_retangulos_setas_loja()
+        _desenhar_botao_seta(surf, left_arrow, "left")
+        _desenhar_botao_seta(surf, right_arrow, "right")
+
+    if mensagem and now_ms < mensagem_until:
+        msg_rendered = menu_font.render(mensagem, True, (255, 230, 60))
+        surf.blit(msg_rendered, (WIDTH // 2 - msg_rendered.get_width() // 2, HEIGHT - 86))
+
+    hint = menu_font.render("SETAS/MOUSE: navega   ESPACO: compra/equipa   ESC/X: volta", True, (210, 210, 220))
+    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 36))
+
+
+def desenhar_oferta_pocao(surf, potions_left):
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 190))
+    surf.blit(overlay, (0, 0))
+
+    title = big_font.render("ULTIMA VIDA PERDIDA!", True, (255, 80, 80))
+    surf.blit(title, (WIDTH // 2 - title.get_width() // 2, HEIGHT // 2 - 110))
+
+    prompt = font.render(f"Usar {skins.POTION_NOME}? (restam {potions_left})", True, WHITE)
+    surf.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, HEIGHT // 2 - 40))
+
+    hint = menu_hint_font.render("S: Sim, continuar com 1 vida   -   N: Nao", True, (170, 170, 185))
+    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT // 2 + 20))
+
+
+def desenhar_cronometro_powerup(surf, label, until_ticks, now, color, y):
     """Desenha a contagem regressiva de um power-up ativo e retorna o próximo y livre."""
     secs_left = (until_ticks - now + 999) // 1000
     txt = status_font.render(f"{label}: {secs_left}s", True, color)
@@ -313,8 +642,8 @@ def draw_powerup_timer(surf, label, until_ticks, now, color, y):
     return y - 26
 
 
-def draw_name_entry(surf, name, title="ENTROU NO TOP 100!", title_color=(255, 215, 0),
-                     prompt="Digite seu nome para o ranking:"):
+def desenhar_entrada_nome(surf, name, title="ENTROU NO TOP 100!", title_color=(255, 215, 0),
+                           prompt="Digite seu nome para o ranking:"):
     """Tela pra digitar/corrigir o nome usado no ranking - tanto no primeiro
     ingresso no Top 100 quanto ao renomear depois, pela tela de ranking."""
     msg = big_font.render(title, True, title_color)
@@ -333,7 +662,7 @@ def draw_name_entry(surf, name, title="ENTROU NO TOP 100!", title_color=(255, 21
     surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT // 2 + 60))
 
 
-def draw_end_message(surf, text, color, rank_phase=None):
+def desenhar_mensagem_fim(surf, text, color, rank_phase=None):
     msg = big_font.render(text, True, color)
     surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT // 2 - 40))
 
@@ -358,7 +687,7 @@ def draw_end_message(surf, text, color, rank_phase=None):
     surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, sub_y))
 
 
-def draw_level_complete(surf, level, bonus_gain=0):
+def desenhar_nivel_completo(surf, level, bonus_gain=0):
     """Overlay rapido de transicao mostrado entre um nivel e o proximo. Se vem
     logo apos uma rodada bonus (bonus_gain > 0), mostra o total de moedas
     pontuadas em vez do aviso de nivel completo."""
@@ -374,7 +703,7 @@ def draw_level_complete(surf, level, bonus_gain=0):
     surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT // 2 + 30))
 
 
-def draw_pause_menu(surf, now_ms, selected, volume):
+def desenhar_menu_pausa(surf, now_ms, selected, volume):
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 185))
     surf.blit(overlay, (0, 0))

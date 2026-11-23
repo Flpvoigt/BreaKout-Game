@@ -10,23 +10,30 @@ pygame.init()
 import ui
 import audio
 import leaderboard
-from entities import Paddle, Ball, spawn_extra_ball, Projectile, Particle, PowerUp, make_bricks, make_bonus_coins
-from fonts import font, score_font, status_font
+import player_profile as profile
+import skins
+from entities import Paddle, Ball, criar_bola_extra, Projectile, Particle, PowerUp, criar_tijolos, criar_moedas_bonus
+from fonts import font, score_font
 from constants import *
 
-pygame.display.set_icon(ui.build_icon_surface())
+pygame.display.set_icon(ui.criar_superficie_icone())
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Breakout")
 clock = pygame.time.Clock()
 
-audio.init_audio()
+audio.iniciar_audio()
 
 
-def main():
+def principal():
     state = "menu"  # "menu" ou "playing"
     menu_selected = 0
-    menu_view = "main"  # "main" ou "credits"
+    menu_view = "main"  # "main", "credits", "ranking" ou "loja"
+
+    loja_categoria = "bolas"
+    loja_idx = 0
+    loja_msg = ""
+    loja_msg_until = 0
 
     paused = False
     pause_selected = 0
@@ -36,7 +43,7 @@ def main():
     paddle = Paddle()
     balls = [Ball()]
     level = 1
-    bricks = make_bricks(level)
+    bricks = criar_tijolos(level)
     particles = []
     powerups = []
     projectiles = []
@@ -48,6 +55,7 @@ def main():
     player_name = ""
     name_entry_context = None  # "gameover_qualify" ou "rename"
     rank_check_phase = "idle"
+    offering_potion = False
     transitioning = False
     level_transition_until = 0
 
@@ -65,9 +73,9 @@ def main():
     game_start_ticks = pygame.time.get_ticks()
     elapsed_ms = 0
 
-    def reset_game():
+    def reiniciar_jogo():
         nonlocal paddle, balls, bricks, particles, powerups, projectiles, score, lives, shake
-        nonlocal game_over, entering_name, player_name, name_entry_context, rank_check_phase
+        nonlocal game_over, entering_name, player_name, name_entry_context, rank_check_phase, offering_potion
         nonlocal paddle_wide_until, slow_until, game_start_ticks, elapsed_ms
         nonlocal paddle_cannons_until, cannon_last_fire
         nonlocal level, transitioning, level_transition_until
@@ -76,7 +84,7 @@ def main():
         paddle = Paddle()
         balls = [Ball()]
         level = 1
-        bricks = make_bricks(level)
+        bricks = criar_tijolos(level)
         particles = []
         powerups = []
         projectiles = []
@@ -88,6 +96,7 @@ def main():
         player_name = ""
         name_entry_context = None
         rank_check_phase = "idle"
+        offering_potion = False
         transitioning = False
         level_transition_until = 0
         paddle_wide_until = 0
@@ -111,20 +120,42 @@ def main():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if state == "menu" and menu_view == "main" and not entering_name:
+                    if ui.obter_retangulo_icone_loja().collidepoint(event.pos):
+                        menu_view = "loja"
+                        loja_categoria = "bolas"
+                        loja_idx = 0
+                        loja_msg = ""
+                elif state == "menu" and menu_view == "loja":
+                    if ui.obter_retangulo_fechar_loja().collidepoint(event.pos):
+                        menu_view = "main"
+                    else:
+                        for cat_id, rect in ui.obter_retangulos_abas_loja().items():
+                            if rect.collidepoint(event.pos):
+                                loja_categoria = cat_id
+                                loja_idx = 0
+                        if loja_categoria != "pocoes":
+                            lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
+                            left_arrow, right_arrow = ui.obter_retangulos_setas_loja()
+                            if left_arrow.collidepoint(event.pos):
+                                loja_idx = (loja_idx - 1) % len(lista)
+                            elif right_arrow.collidepoint(event.pos):
+                                loja_idx = (loja_idx + 1) % len(lista)
             if event.type == pygame.KEYDOWN:
                 if entering_name:
                     if event.key == pygame.K_RETURN:
                         entering_name = False
                         name_final = player_name.strip()[:leaderboard.MAX_NAME_LEN] or "JOGADOR"
                         if name_entry_context == "rename":
-                            leaderboard.set_player_name(name_final)
-                            if leaderboard.get_best_submitted_score() > 0:
-                                leaderboard.submit_rank_async(leaderboard.get_player_id(), name_final,
-                                                               leaderboard.get_best_submitted_score())
+                            profile.definir_nome_jogador(name_final)
+                            if profile.obter_melhor_pontuacao_enviada() > 0:
+                                leaderboard.enviar_colocacao_async(profile.obter_id_jogador(), name_final,
+                                                                    profile.obter_melhor_pontuacao_enviada())
                         else:
-                            leaderboard.set_player_name(name_final)
+                            profile.definir_nome_jogador(name_final)
                             rank_check_phase = "submitting"
-                            leaderboard.submit_rank_async(leaderboard.get_player_id(), name_final, score)
+                            leaderboard.enviar_colocacao_async(profile.obter_id_jogador(), name_final, score)
                         name_entry_context = None
                     elif event.key == pygame.K_ESCAPE:
                         entering_name = False
@@ -135,17 +166,84 @@ def main():
                         player_name = player_name[:-1]
                     elif event.unicode and event.unicode.isprintable() and len(player_name) < leaderboard.MAX_NAME_LEN:
                         player_name += event.unicode
+                elif offering_potion:
+                    if event.key in (pygame.K_s, pygame.K_SPACE, pygame.K_RETURN):
+                        profile.usar_pocao()
+                        offering_potion = False
+                        lives = 1
+                        balls = [Ball()]
+                        audio.tocar_som("buy_life")
+                    elif event.key in (pygame.K_n, pygame.K_ESCAPE):
+                        offering_potion = False
+                        game_over = True
+                        rank_check_phase = "checking"
+                        leaderboard.verificar_colocacao_async(score, profile.obter_id_jogador())
+                        audio.tocar_som("game_over")
                 elif state == "menu":
                     if menu_view == "ranking":
                         if event.key in (pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN):
                             menu_view = "main"
-                        elif event.key == pygame.K_n and leaderboard.get_player_name():
+                        elif event.key == pygame.K_n and profile.obter_nome_jogador():
                             entering_name = True
-                            player_name = leaderboard.get_player_name() or ""
+                            player_name = profile.obter_nome_jogador() or ""
                             name_entry_context = "rename"
                     elif menu_view == "credits":
                         if event.key in (pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN):
                             menu_view = "main"
+                    elif menu_view == "loja":
+                        categorias = ["bolas", "raquetes", "pocoes"]
+                        if event.key == pygame.K_ESCAPE:
+                            menu_view = "main"
+                        elif event.key in (pygame.K_UP, pygame.K_w):
+                            loja_categoria = categorias[(categorias.index(loja_categoria) - 1) % len(categorias)]
+                            loja_idx = 0
+                        elif event.key in (pygame.K_DOWN, pygame.K_s):
+                            loja_categoria = categorias[(categorias.index(loja_categoria) + 1) % len(categorias)]
+                            loja_idx = 0
+                        elif event.key in (pygame.K_LEFT, pygame.K_a) and loja_categoria != "pocoes":
+                            lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
+                            loja_idx = (loja_idx - 1) % len(lista)
+                        elif event.key in (pygame.K_RIGHT, pygame.K_d) and loja_categoria != "pocoes":
+                            lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
+                            loja_idx = (loja_idx + 1) % len(lista)
+                        elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                            t = pygame.time.get_ticks()
+                            if loja_categoria == "bolas":
+                                skin_id = skins.BALL_SKIN_ORDER[loja_idx]
+                                info = skins.BALL_SKINS[skin_id]
+                                if profile.possui_skin_bola(skin_id):
+                                    profile.equipar_skin_bola(skin_id)
+                                    loja_msg = f"{info['nome']} equipada!"
+                                elif profile.gastar_moedas(info["preco"]):
+                                    profile.desbloquear_skin_bola(skin_id)
+                                    profile.equipar_skin_bola(skin_id)
+                                    audio.tocar_som("powerup")
+                                    loja_msg = f"{info['nome']} comprada e equipada!"
+                                else:
+                                    loja_msg = "Moedas insuficientes!"
+                                loja_msg_until = t + 1500
+                            elif loja_categoria == "raquetes":
+                                skin_id = skins.PADDLE_SKIN_ORDER[loja_idx]
+                                info = skins.PADDLE_SKINS[skin_id]
+                                if profile.possui_skin_raquete(skin_id):
+                                    profile.equipar_skin_raquete(skin_id)
+                                    loja_msg = f"{info['nome']} equipada!"
+                                elif profile.gastar_moedas(info["preco"]):
+                                    profile.desbloquear_skin_raquete(skin_id)
+                                    profile.equipar_skin_raquete(skin_id)
+                                    audio.tocar_som("powerup")
+                                    loja_msg = f"{info['nome']} comprada e equipada!"
+                                else:
+                                    loja_msg = "Moedas insuficientes!"
+                                loja_msg_until = t + 1500
+                            elif loja_categoria == "pocoes":
+                                if profile.gastar_moedas(skins.POTION_PRECO):
+                                    profile.adicionar_pocao()
+                                    audio.tocar_som("powerup")
+                                    loja_msg = f"Pocao comprada! Total: {profile.obter_pocoes()}"
+                                else:
+                                    loja_msg = "Moedas insuficientes!"
+                                loja_msg_until = t + 1500
                     else:
                         if event.key in (pygame.K_UP, pygame.K_w):
                             menu_selected = (menu_selected - 1) % len(MENU_OPTIONS)
@@ -154,18 +252,18 @@ def main():
                         elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
                             choice = MENU_OPTIONS[menu_selected]
                             if choice == "INICIAR JOGO":
-                                reset_game()
+                                reiniciar_jogo()
                                 state = "playing"
                             elif choice == "RANKING":
                                 menu_view = "ranking"
-                                leaderboard.fetch_leaderboard_async()
+                                leaderboard.buscar_ranking_async()
                             elif choice == "CREDITOS":
                                 menu_view = "credits"
                             elif choice == "SAIR":
                                 pygame.quit()
                                 sys.exit()
                 elif event.key == pygame.K_r and game_over:
-                    reset_game()
+                    reiniciar_jogo()
                     state = "menu"
                     menu_view = "main"
                     menu_selected = 0
@@ -194,9 +292,9 @@ def main():
                             paused = False
                             pause_accum_ms = t - frozen_now
                         elif choice == "REINICIAR":
-                            reset_game()
+                            reiniciar_jogo()
                         elif choice == "MENU INICIAL":
-                            reset_game()
+                            reiniciar_jogo()
                             state = "menu"
                             menu_view = "main"
                             menu_selected = 0
@@ -211,15 +309,10 @@ def main():
                         launch_pressed = True
                     elif event.key == pygame.K_SPACE:
                         launch_pressed = True
-                    elif event.key == pygame.K_v and not bonus_active:
-                        if lives < 3 and score >= EXTRA_LIFE_COST:
-                            score -= EXTRA_LIFE_COST
-                            lives += 1
-                            audio.play_sound("buy_life")
                     if launch_pressed:
                         for b in balls:
                             if b.stuck:
-                                b.launch(direction)
+                                b.lancar(direction)
 
         keys = pygame.key.get_pressed()
         # enquanto pausado, 'now' fica congelado no valor de quando pausou -
@@ -227,24 +320,24 @@ def main():
         now = frozen_now if paused else (pygame.time.get_ticks() - pause_accum_ms)
 
         # acompanha a verificacao/envio do ranking apos o game over, sem travar o jogo
-        if game_over and rank_check_phase == "checking" and leaderboard.get_rank_check_status() in ("done", "error"):
-            if leaderboard.get_rank_check_status() == "error":
+        if game_over and rank_check_phase == "checking" and leaderboard.obter_status_verificacao() in ("done", "error"):
+            if leaderboard.obter_status_verificacao() == "error":
                 rank_check_phase = "error"
-            elif leaderboard.get_rank_check_qualifies():
-                if not leaderboard.get_player_name():
+            elif leaderboard.obter_verificacao_qualifica():
+                if not profile.obter_nome_jogador():
                     rank_check_phase = "naming"
                     entering_name = True
                     player_name = ""
                     name_entry_context = "gameover_qualify"
                 else:
                     rank_check_phase = "submitting"
-                    leaderboard.submit_rank_async(leaderboard.get_player_id(), leaderboard.get_player_name(), score)
+                    leaderboard.enviar_colocacao_async(profile.obter_id_jogador(), profile.obter_nome_jogador(), score)
             else:
-                rank_check_phase = "not_top100" if leaderboard.get_rank_check_reason() == "not_top100" else "not_personal_best"
+                rank_check_phase = "not_top100" if leaderboard.obter_motivo_verificacao() == "not_top100" else "not_personal_best"
 
-        if rank_check_phase == "submitting" and leaderboard.get_rank_submit_status() in ("ok", "error"):
-            if leaderboard.get_rank_submit_status() == "ok":
-                leaderboard.set_best_submitted_score(score)
+        if rank_check_phase == "submitting" and leaderboard.obter_status_envio() in ("ok", "error"):
+            if leaderboard.obter_status_envio() == "ok":
+                profile.definir_melhor_pontuacao_enviada(score)
                 rank_check_phase = "submitted_ok"
             else:
                 rank_check_phase = "submitted_error"
@@ -253,7 +346,7 @@ def main():
         if state == "playing" and transitioning and now >= level_transition_until:
             transitioning = False
             level += 1
-            bricks = make_bricks(level)
+            bricks = criar_tijolos(level)
             balls = [Ball()]
             powerups = []
             projectiles = []
@@ -263,32 +356,32 @@ def main():
             paddle_cannons_until = 0
             last_bonus_gain = 0
 
-        if state == "playing" and not game_over and not transitioning and not paused:
+        if state == "playing" and not game_over and not transitioning and not paused and not offering_potion:
             elapsed_ms = now - game_start_ticks
 
-            paddle.update(keys)
+            paddle.atualizar(keys)
 
             # efeito raquete larga (duracao real em ms)
             target_width = int(paddle.base_width * 1.6) if now < paddle_wide_until else paddle.base_width
-            paddle.set_width(target_width)
+            paddle.definir_largura(target_width)
 
             # efeito bola lenta (duracao real em ms)
             speed_factor = SLOW_FACTOR if now < slow_until else 1.0
 
             for b in balls:
                 if b.stuck:
-                    b.stick_to(paddle)
+                    b.grudar_em(paddle)
                 else:
-                    b.update(speed_factor)
+                    b.atualizar(speed_factor)
 
             # colisao com a raquete
             for b in balls:
-                if not b.stuck and b.rect().colliderect(paddle.rect()) and b.vy > 0:
+                if not b.stuck and b.retangulo().colliderect(paddle.retangulo()) and b.vy > 0:
                     b.vy *= -1
                     hit_pos = (b.x - paddle.x) / paddle.width - 0.5
                     b.vx += hit_pos * 6
                     b.vx = max(-9, min(9, b.vx))
-                    audio.play_sound("hit_paddle")
+                    audio.tocar_som("hit_paddle")
 
             # canhoes (power-up C): disparam projeteis das duas pontas da raquete
             if now < paddle_cannons_until:
@@ -297,10 +390,10 @@ def main():
                         cannon_last_fire[side] = now
                         px = paddle.x + 7 if side == "left" else paddle.x + paddle.width - 7
                         projectiles.append(Projectile(px, paddle.y))
-                        audio.play_sound("cannon_fire")
+                        audio.tocar_som("cannon_fire")
 
             for proj in projectiles:
-                proj.update()
+                proj.atualizar()
             projectiles[:] = [p for p in projectiles if p.y + p.h > 0]
 
             if not bonus_active:
@@ -309,13 +402,13 @@ def main():
                     if b.stuck:
                         continue
                     for brick in bricks:
-                        if brick.alive and b.rect().colliderect(brick.rect):
-                            destroyed = brick.hit()
+                        if brick.alive and b.retangulo().colliderect(brick.rect):
+                            destroyed = brick.atingir()
                             b.vy *= -1
                             if destroyed:
                                 score += 10
                                 shake = 8
-                                audio.play_sound("brick_destroy")
+                                audio.tocar_som("brick_destroy")
                                 for _ in range(18):
                                     particles.append(Particle(brick.rect.centerx, brick.rect.centery, brick.base_color))
                                 if random.random() < POWERUP_DROP_CHANCE:
@@ -323,25 +416,25 @@ def main():
                                     powerups.append(PowerUp(brick.rect.centerx, brick.rect.centery, kind))
                             else:
                                 shake = 4
-                                audio.play_sound("brick_hit")
+                                audio.tocar_som("brick_hit")
                             break
 
                 # canhoes atingindo tijolos - mesmo dano/quebra de uma batida de bola
                 for proj in projectiles[:]:
                     for brick in bricks:
-                        if brick.alive and proj.rect().colliderect(brick.rect):
-                            destroyed = brick.hit()
+                        if brick.alive and proj.retangulo().colliderect(brick.rect):
+                            destroyed = brick.atingir()
                             if destroyed:
                                 score += 10
                                 shake = 6
-                                audio.play_sound("brick_destroy")
+                                audio.tocar_som("brick_destroy")
                                 for _ in range(14):
                                     particles.append(Particle(brick.rect.centerx, brick.rect.centery, brick.base_color))
                                 if random.random() < POWERUP_DROP_CHANCE:
                                     kind = random.choice(list(POWERUP_COLORS.keys()))
                                     powerups.append(PowerUp(brick.rect.centerx, brick.rect.centery, kind))
                             else:
-                                audio.play_sound("brick_hit")
+                                audio.tocar_som("brick_hit")
                             projectiles.remove(proj)
                             break
 
@@ -351,23 +444,28 @@ def main():
                     lives -= 1
                     shake = 15
                     if lives <= 0:
-                        game_over = True
-                        rank_check_phase = "checking"
-                        leaderboard.check_rank_async(score, leaderboard.get_player_id())
-                        balls = []
-                        audio.play_sound("game_over")
+                        if profile.obter_pocoes() > 0:
+                            offering_potion = True
+                            balls = []
+                            audio.tocar_som("lose_life")
+                        else:
+                            game_over = True
+                            rank_check_phase = "checking"
+                            leaderboard.verificar_colocacao_async(score, profile.obter_id_jogador())
+                            balls = []
+                            audio.tocar_som("game_over")
                     else:
                         balls = [Ball()]
-                        audio.play_sound("lose_life")
+                        audio.tocar_som("lose_life")
                 else:
                     balls = survivors
 
                 # power-ups caindo / coleta pela raquete
                 still_falling = []
                 for pu in powerups:
-                    pu.update()
-                    if pu.rect().colliderect(paddle.rect()):
-                        audio.play_sound("powerup")
+                    pu.atualizar()
+                    if pu.retangulo().colliderect(paddle.retangulo()):
+                        audio.tocar_som("powerup")
                         if pu.kind == "W":
                             paddle_wide_until = now + WIDE_DURATION_MS
                         elif pu.kind == "S":
@@ -381,13 +479,13 @@ def main():
                                 direction = random.choice([-1, 1])
                                 for b in balls:
                                     if b.stuck:
-                                        b.launch(direction)
+                                        b.lancar(direction)
                             source = next((b for b in balls if not b.stuck), None)
                             if source is not None:
                                 to_add = min(2, MAX_BALLS - len(balls))
                                 for i in range(to_add):
                                     offset = -3 if i == 0 else 3
-                                    balls.append(spawn_extra_ball(source, offset))
+                                    balls.append(criar_bola_extra(source, offset))
                         continue
                     if pu.y - pu.h / 2 > HEIGHT:
                         continue
@@ -395,11 +493,11 @@ def main():
                 powerups = still_falling
 
                 if bricks and all(not b.alive for b in bricks):
-                    audio.play_sound("victory")
+                    audio.tocar_som("victory")
                     if level % BONUS_LEVEL_INTERVAL == 0:
                         bonus_active = True
                         bonus_until = now + BONUS_LEVEL_DURATION_MS
-                        bonus_coins = make_bonus_coins()
+                        bonus_coins = criar_moedas_bonus()
                         bonus_score_gain = 0
                         balls = [Ball()]
                         paddle_wide_until = 0
@@ -416,12 +514,13 @@ def main():
                     if b.stuck:
                         continue
                     for coin in bonus_coins:
-                        if coin.alive and b.rect().colliderect(coin.rect()):
+                        if coin.alive and b.retangulo().colliderect(coin.retangulo()):
                             coin.alive = False
                             score += BONUS_COIN_VALUE
                             bonus_score_gain += BONUS_COIN_VALUE
+                            profile.adicionar_moedas(1)
                             shake = 3
-                            audio.play_sound("coin")
+                            audio.tocar_som("coin")
                             for _ in range(10):
                                 particles.append(Particle(coin.x, coin.y, (255, 215, 0)))
                 bonus_coins = [c for c in bonus_coins if c.alive]
@@ -436,7 +535,7 @@ def main():
                     level_transition_until = now + LEVEL_TRANSITION_MS
 
         for p in particles:
-            p.update()
+            p.atualizar()
         particles[:] = [p for p in particles if p.life > 0]
 
         if shake > 0:
@@ -450,30 +549,33 @@ def main():
 
         if state == "menu":
             if menu_view == "credits":
-                ui.draw_credits(draw_surf, now)
+                ui.desenhar_creditos(draw_surf, now)
             elif menu_view == "ranking":
-                ui.draw_ranking(draw_surf, now)
+                ui.desenhar_ranking(draw_surf, now)
+            elif menu_view == "loja":
+                ui.desenhar_loja(draw_surf, now, loja_categoria, loja_idx, loja_msg, loja_msg_until)
             else:
-                ui.draw_menu(draw_surf, now, menu_selected)
+                loja_hover = ui.obter_retangulo_icone_loja().collidepoint(pygame.mouse.get_pos())
+                ui.desenhar_menu(draw_surf, now, menu_selected, loja_hover)
         else:
-            ui.draw_starry_background(draw_surf, now)
+            ui.desenhar_fundo_estrelado(draw_surf, now)
             if bonus_active:
                 for coin in bonus_coins:
-                    coin.draw(draw_surf)
+                    coin.desenhar(draw_surf)
             else:
                 for brick in bricks:
-                    brick.draw(draw_surf)
-            paddle.draw(draw_surf)
+                    brick.desenhar(draw_surf)
+            paddle.desenhar(draw_surf, now)
             if now < paddle_cannons_until:
-                ui.draw_cannons(draw_surf, paddle)
+                ui.desenhar_canhoes(draw_surf, paddle)
             for b in balls:
-                b.draw(draw_surf)
+                b.desenhar(draw_surf, now)
             for pu in powerups:
-                pu.draw(draw_surf)
+                pu.desenhar(draw_surf)
             for proj in projectiles:
-                proj.draw(draw_surf)
+                proj.desenhar(draw_surf)
             for p in particles:
-                p.draw(draw_surf)
+                p.desenhar(draw_surf)
 
             # placar em destaque (fonte maior, cor dourada) - é a info principal do HUD
             score_text = score_font.render(f"PONTOS: {score}", True, SCORE_COLOR)
@@ -481,7 +583,7 @@ def main():
             level_color = (255, 215, 0) if bonus_active else WHITE
             level_text = font.render(level_label, True, level_color)
             lives_text = font.render(f"VIDAS: {lives}", True, WHITE)
-            time_text = font.render(ui.format_time(elapsed_ms), True, WHITE)
+            time_text = font.render(ui.formatar_tempo(elapsed_ms), True, WHITE)
             draw_surf.blit(score_text, (20, 14))
             draw_surf.blit(level_text, (20, 58))
             draw_surf.blit(lives_text, (WIDTH - 150, 20))
@@ -492,38 +594,35 @@ def main():
             if not game_over:
                 status_y = HEIGHT - 72
                 if now < paddle_wide_until:
-                    status_y = ui.draw_powerup_timer(draw_surf, "RAQUETE LARGA", paddle_wide_until, now,
-                                                      POWERUP_COLORS["W"], status_y)
+                    status_y = ui.desenhar_cronometro_powerup(draw_surf, "RAQUETE LARGA", paddle_wide_until, now,
+                                                               POWERUP_COLORS["W"], status_y)
                 if now < slow_until:
-                    status_y = ui.draw_powerup_timer(draw_surf, "BOLA LENTA", slow_until, now,
+                    status_y = ui.desenhar_cronometro_powerup(draw_surf, "BOLA LENTA", slow_until, now,
                                         POWERUP_COLORS["S"], status_y)
                 if now < paddle_cannons_until:
-                    status_y = ui.draw_powerup_timer(draw_surf, "CANHOES", paddle_cannons_until, now,
+                    status_y = ui.desenhar_cronometro_powerup(draw_surf, "CANHOES", paddle_cannons_until, now,
                                         POWERUP_COLORS["C"], status_y)
                 if bonus_active:
-                    ui.draw_powerup_timer(draw_surf, "TEMPO BONUS", bonus_until, now,
+                    ui.desenhar_cronometro_powerup(draw_surf, "TEMPO BONUS", bonus_until, now,
                                         (255, 215, 0), status_y)
 
-                if lives < 3 and not bonus_active:
-                    cost_color = (120, 230, 90) if score >= EXTRA_LIFE_COST else (140, 140, 150)
-                    buy_hint = status_font.render(
-                        f"V: trocar {EXTRA_LIFE_COST} pts por 1 vida extra", True, cost_color)
-                    draw_surf.blit(buy_hint, (WIDTH - buy_hint.get_width() - 20, HEIGHT - 30))
-
             if transitioning:
-                ui.draw_level_complete(draw_surf, level, last_bonus_gain)
+                ui.desenhar_nivel_completo(draw_surf, level, last_bonus_gain)
 
             if game_over and not entering_name:
-                ui.draw_end_message(draw_surf, "GAME OVER", (255, 80, 80), rank_check_phase)
+                ui.desenhar_mensagem_fim(draw_surf, "GAME OVER", (255, 80, 80), rank_check_phase)
 
             if paused:
-                ui.draw_pause_menu(draw_surf, now, pause_selected, audio.sound_volume)
+                ui.desenhar_menu_pausa(draw_surf, now, pause_selected, audio.sound_volume)
 
         if entering_name:
             if name_entry_context == "rename":
-                ui.draw_name_entry(draw_surf, player_name, "ALTERAR NOME", (0, 220, 255), "Digite o novo nome:")
+                ui.desenhar_entrada_nome(draw_surf, player_name, "ALTERAR NOME", (0, 220, 255), "Digite o novo nome:")
             else:
-                ui.draw_name_entry(draw_surf, player_name)
+                ui.desenhar_entrada_nome(draw_surf, player_name)
+
+        if offering_potion:
+            ui.desenhar_oferta_pocao(draw_surf, profile.obter_pocoes())
 
         screen.blit(draw_surf, (offset_x, offset_y))
         pygame.display.flip()
