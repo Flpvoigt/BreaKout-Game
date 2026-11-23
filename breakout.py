@@ -2,8 +2,42 @@ import pygame
 import random
 import sys
 import math
+import json
+import os
+import uuid
+import threading
+import urllib.request
+import urllib.error
+
+def _build_icon_surface(size=64):
+    """Icone da janela/barra de tarefas: mini-cena do jogo (tijolos + bola +
+    raquete), no lugar do mascote padrao do Pygame."""
+    icon = pygame.Surface((size, size), pygame.SRCALPHA)
+    pygame.draw.rect(icon, (10, 10, 20, 255), (2, 2, size - 4, size - 4), border_radius=size // 6)
+
+    brick_colors = [(255, 80, 80), (80, 160, 255)]
+    cols = 4
+    brick_w = (size - 16) // cols
+    brick_h = max(4, size // 10)
+    gap = 2
+    for row, color in enumerate(brick_colors):
+        y = 8 + row * (brick_h + gap)
+        for col in range(cols):
+            x = 8 + col * (brick_w + gap)
+            pygame.draw.rect(icon, color, (x, y, brick_w - gap, brick_h), border_radius=2)
+
+    ball_radius = max(3, size // 12)
+    pygame.draw.circle(icon, (255, 255, 255), (size * 2 // 3, size * 2 // 3), ball_radius)
+
+    paddle_w = size // 2
+    paddle_h = max(5, size // 10)
+    paddle_rect = pygame.Rect(size // 2 - paddle_w // 2, size - paddle_h - 6, paddle_w, paddle_h)
+    pygame.draw.rect(icon, (0, 220, 255), paddle_rect, border_radius=paddle_h // 2)
+    return icon
+
 
 pygame.init()
+pygame.display.set_icon(_build_icon_surface())
 
 WIDTH, HEIGHT = 800, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -173,6 +207,126 @@ BONUS_COIN_VALUE = 25
 
 # ---- Troca de pontos por vida extra ----
 EXTRA_LIFE_COST = 3000
+
+# ---- Ranking online (Firebase Realtime Database, gratuito) ----
+# Embutido no codigo-fonte: nao ha segredo real aqui, qualquer um que clonar o
+# repo acessa o mesmo placar compartilhado (ver README/regras do banco).
+LEADERBOARD_BASE_URL = "https://breakoutgame-daf77-default-rtdb.firebaseio.com/leaderboard"
+LEADERBOARD_TOP_N = 10        # quantos nomes aparecem na tela de ranking
+LEADERBOARD_QUALIFY_N = 100   # precisa superar o 100o colocado pra "entrar" pela 1a vez
+LEADERBOARD_TIMEOUT = 4
+MAX_NAME_LEN = 12
+
+# Perfil local (1 arquivo por maquina/clone do repo) - guarda um id unico e o
+# nome escolhido, pra cada jogador ocupar sempre a MESMA posicao no ranking
+# (upsert), em vez de uma entrada nova a cada Game Over.
+PROFILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "player_profile.json")
+
+_leaderboard_cache = {"status": "idle", "entries": []}  # status: idle/loading/ok/error
+_rank_check_cache = {"status": "idle"}  # status: idle/checking/done/error
+_rank_submit_cache = {"status": "idle"}  # status: idle/sending/ok/error
+
+
+def save_profile(profile):
+    try:
+        with open(PROFILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(profile, f)
+    except Exception:
+        pass
+
+
+def load_or_create_profile():
+    try:
+        with open(PROFILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "player_id" in data:
+            data.setdefault("name", None)
+            data.setdefault("best_submitted_score", 0)
+            return data
+    except Exception:
+        pass
+    profile = {"player_id": uuid.uuid4().hex, "name": None, "best_submitted_score": 0}
+    save_profile(profile)
+    return profile
+
+
+_player_profile = load_or_create_profile()
+
+
+def _fetch_all_entries():
+    """Baixa o node 'leaderboard' inteiro: {player_id: {name, score}, ...}."""
+    with urllib.request.urlopen(f"{LEADERBOARD_BASE_URL}.json", timeout=LEADERBOARD_TIMEOUT) as resp:
+        raw = json.loads(resp.read().decode("utf-8") or "null")
+    entries = {}
+    if isinstance(raw, dict):
+        for key, item in raw.items():
+            if isinstance(item, dict) and "name" in item and "score" in item:
+                entries[key] = {"name": str(item["name"])[:MAX_NAME_LEN], "score": int(item["score"])}
+    return entries
+
+
+def _fetch_leaderboard_worker():
+    try:
+        entries = _fetch_all_entries()
+        ranked = sorted(entries.values(), key=lambda e: e["score"], reverse=True)
+        _leaderboard_cache["entries"] = [(e["name"], e["score"]) for e in ranked[:LEADERBOARD_TOP_N]]
+        _leaderboard_cache["status"] = "ok"
+    except Exception:
+        _leaderboard_cache["status"] = "error"
+
+
+def fetch_leaderboard_async():
+    """Busca o top do ranking em background pra nao travar o loop do jogo esperando a rede."""
+    if _leaderboard_cache["status"] == "loading":
+        return
+    _leaderboard_cache["status"] = "loading"
+    threading.Thread(target=_fetch_leaderboard_worker, daemon=True).start()
+
+
+def _rank_check_worker(score, player_id):
+    """Decide se 'score' merece ir ao ranking: ou e melhora do proprio recorde
+    (se o jogador ja tem entrada) ou supera o 100o colocado (se ainda nao tem)."""
+    try:
+        entries = _fetch_all_entries()
+        already_in = player_id in entries
+        if already_in and entries[player_id]["score"] >= score:
+            qualifies, reason = False, "not_personal_best"
+        else:
+            scores_sorted = sorted((e["score"] for e in entries.values()), reverse=True)
+            if already_in or len(scores_sorted) < LEADERBOARD_QUALIFY_N:
+                qualifies, reason = True, "ok"
+            else:
+                cutoff = scores_sorted[LEADERBOARD_QUALIFY_N - 1]
+                qualifies = score > cutoff
+                reason = "ok" if qualifies else "not_top100"
+        _rank_check_cache.update(status="done", qualifies=qualifies, reason=reason)
+    except Exception:
+        _rank_check_cache.update(status="error", qualifies=False, reason="error")
+
+
+def check_rank_async(score, player_id):
+    """Verifica em background se a pontuacao entra no ranking, sem travar o jogo."""
+    _rank_check_cache["status"] = "checking"
+    threading.Thread(target=_rank_check_worker, args=(score, player_id), daemon=True).start()
+
+
+def _submit_rank_worker(player_id, name, score):
+    try:
+        url = f"{LEADERBOARD_BASE_URL}/{player_id}.json"
+        body = json.dumps({"name": name, "score": score}).encode("utf-8")
+        req = urllib.request.Request(url, data=body, method="PUT",
+                                      headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=LEADERBOARD_TIMEOUT)
+        _rank_submit_cache["status"] = "ok"
+    except Exception:
+        _rank_submit_cache["status"] = "error"
+
+
+def submit_rank_async(player_id, name, score):
+    """Grava/atualiza a pontuacao do jogador sempre na mesma chave (player_id):
+    uma unica posicao no ranking, que so sobe conforme ele joga."""
+    _rank_submit_cache["status"] = "sending"
+    threading.Thread(target=_submit_rank_worker, args=(player_id, name, score), daemon=True).start()
 
 
 class Paddle:
@@ -702,6 +856,64 @@ def draw_credits(surf, now_ms):
     surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, y + 16))
 
 
+RANK_TAGS = {
+    0: ("#1 RANKING MUNDIAL", (255, 215, 0)),
+    1: ("#2 TOP MUNDIAL", (210, 210, 225)),
+    2: ("#3 TOP MUNDIAL", (205, 140, 70)),
+    3: ("#4 TOP MUNDIAL", (120, 200, 255)),
+    4: ("#5 TOP MUNDIAL", (150, 230, 150)),
+}
+
+
+def draw_ranking(surf, now_ms):
+    draw_retro_background(surf, now_ms)
+    title = big_font.render("TOP PLACARES", True, (0, 220, 255))
+    surf.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
+
+    status = _leaderboard_cache["status"]
+    row_x = WIDTH // 2 - 260
+    y = 150
+    if status in ("idle", "loading"):
+        msg = menu_font.render("Carregando...", True, WHITE)
+        surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, y))
+    elif status == "error":
+        msg = menu_font.render("Nao foi possivel carregar (sem internet?)", True, (255, 120, 120))
+        surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, y))
+    else:
+        entries = _leaderboard_cache["entries"]
+        if not entries:
+            msg = menu_font.render("Nenhuma pontuacao registrada ainda.", True, WHITE)
+            surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, y))
+        else:
+            for i, (name, score) in enumerate(entries):
+                color = (255, 230, 60) if i == 0 else (210, 210, 220)
+                line = f"{i + 1:>2}. {name:<12} {score:>6} pts"
+                rendered = menu_font.render(line, True, color)
+                surf.blit(rendered, (row_x, y + i * 32))
+                if i in RANK_TAGS:
+                    tag_text, tag_color = RANK_TAGS[i]
+                    tag_rendered = status_font.render(tag_text, True, tag_color)
+                    surf.blit(tag_rendered, (row_x + rendered.get_width() + 16, y + i * 32 + 3))
+
+    hint = menu_font.render("Pressione ESPACO ou ESC para voltar", True, (120, 230, 90))
+    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 80))
+
+    if _player_profile.get("name"):
+        rename_hint = menu_font.render("N para mudar seu nome no ranking", True, (170, 170, 185))
+        surf.blit(rename_hint, (WIDTH // 2 - rename_hint.get_width() // 2, HEIGHT - 54))
+
+    rename_status_msgs = {
+        "sending": ("Atualizando nome...", (200, 200, 120)),
+        "ok": ("Nome atualizado!", (120, 230, 90)),
+        "error": ("Falha ao atualizar (sem internet?)", (255, 120, 120)),
+    }
+    sub_status = _rank_submit_cache.get("status")
+    if sub_status in rename_status_msgs:
+        text_line, color_line = rename_status_msgs[sub_status]
+        rendered = menu_font.render(text_line, True, color_line)
+        surf.blit(rendered, (WIDTH // 2 - rendered.get_width() // 2, HEIGHT - 28))
+
+
 def draw_powerup_timer(surf, label, until_ticks, now, color, y):
     """Desenha a contagem regressiva de um power-up ativo e retorna o próximo y livre."""
     secs_left = (until_ticks - now + 999) // 1000
@@ -710,11 +922,49 @@ def draw_powerup_timer(surf, label, until_ticks, now, color, y):
     return y - 26
 
 
-def draw_end_message(surf, text, color):
+def draw_name_entry(surf, name, title="ENTROU NO TOP 100!", title_color=(255, 215, 0),
+                     prompt="Digite seu nome para o ranking:"):
+    """Tela pra digitar/corrigir o nome usado no ranking - tanto no primeiro
+    ingresso no Top 100 quanto ao renomear depois, pela tela de ranking."""
+    msg = big_font.render(title, True, title_color)
+    surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT // 2 - 100))
+
+    prompt_text = font.render(prompt, True, WHITE)
+    surf.blit(prompt_text, (WIDTH // 2 - prompt_text.get_width() // 2, HEIGHT // 2 - 40))
+
+    box = pygame.Rect(WIDTH // 2 - 140, HEIGHT // 2, 280, 40)
+    pygame.draw.rect(surf, (30, 30, 40), box, border_radius=6)
+    pygame.draw.rect(surf, (0, 220, 255), box, width=2, border_radius=6)
+    name_text = font.render(name + "_", True, WHITE)
+    surf.blit(name_text, (box.x + 10, box.y + 5))
+
+    hint = menu_font.render("ENTER confirma   -   ESC cancela", True, (170, 170, 185))
+    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT // 2 + 60))
+
+
+def draw_end_message(surf, text, color, rank_phase=None):
     msg = big_font.render(text, True, color)
-    sub = font.render("Pressione R pra voltar ao menu", True, WHITE)
     surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT // 2 - 40))
-    surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT // 2 + 20))
+
+    status_by_phase = {
+        "checking": ("Verificando ranking...", (200, 200, 120)),
+        "submitting": ("Enviando ao ranking...", (200, 200, 120)),
+        "submitted_ok": ("Pontuacao registrada no ranking!", (120, 230, 90)),
+        "submitted_error": ("Falha ao enviar ao ranking (sem internet?)", (255, 120, 120)),
+        "not_top100": ("Pontuacao nao entrou no Top 100.", (170, 170, 185)),
+        "not_personal_best": ("Pontuacao nao superou seu recorde no ranking.", (170, 170, 185)),
+        "skipped": ("Envio ao ranking pulado.", (170, 170, 185)),
+        "error": ("Nao foi possivel verificar o ranking.", (255, 120, 120)),
+    }
+    sub_y = HEIGHT // 2 + 20
+    if rank_phase in status_by_phase:
+        text_line, color_line = status_by_phase[rank_phase]
+        st = font.render(text_line, True, color_line)
+        surf.blit(st, (WIDTH // 2 - st.get_width() // 2, sub_y))
+        sub_y += 34
+
+    sub = font.render("Pressione R pra voltar ao menu", True, WHITE)
+    surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, sub_y))
 
 
 def draw_level_complete(surf, level, bonus_gain=0):
@@ -733,7 +983,7 @@ def draw_level_complete(surf, level, bonus_gain=0):
     surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT // 2 + 30))
 
 
-MENU_OPTIONS = ["INICIAR JOGO", "CREDITOS", "SAIR"]
+MENU_OPTIONS = ["INICIAR JOGO", "RANKING", "CREDITOS", "SAIR"]
 PAUSE_OPTIONS = ["CONTINUAR", "VOLUME", "REINICIAR", "MENU INICIAL"]
 
 
@@ -784,6 +1034,10 @@ def main():
     lives = 3
     shake = 0
     game_over = False
+    entering_name = False
+    player_name = ""
+    name_entry_context = None  # "gameover_qualify" ou "rename"
+    rank_check_phase = "idle"
     transitioning = False
     level_transition_until = 0
 
@@ -803,7 +1057,8 @@ def main():
 
     def reset_game():
         nonlocal paddle, balls, bricks, particles, powerups, projectiles, score, lives, shake
-        nonlocal game_over, paddle_wide_until, slow_until, game_start_ticks, elapsed_ms
+        nonlocal game_over, entering_name, player_name, name_entry_context, rank_check_phase
+        nonlocal paddle_wide_until, slow_until, game_start_ticks, elapsed_ms
         nonlocal paddle_cannons_until, cannon_last_fire
         nonlocal level, transitioning, level_transition_until
         nonlocal paused, pause_selected, pause_accum_ms, frozen_now
@@ -819,6 +1074,10 @@ def main():
         lives = 3
         shake = 0
         game_over = False
+        entering_name = False
+        player_name = ""
+        name_entry_context = None
+        rank_check_phase = "idle"
         transitioning = False
         level_transition_until = 0
         paddle_wide_until = 0
@@ -843,8 +1102,40 @@ def main():
                 pygame.quit()
                 sys.exit()
             if event.type == pygame.KEYDOWN:
-                if state == "menu":
-                    if menu_view == "credits":
+                if entering_name:
+                    if event.key == pygame.K_RETURN:
+                        entering_name = False
+                        name_final = player_name.strip()[:MAX_NAME_LEN] or "JOGADOR"
+                        if name_entry_context == "rename":
+                            _player_profile["name"] = name_final
+                            save_profile(_player_profile)
+                            if _player_profile.get("best_submitted_score", 0) > 0:
+                                submit_rank_async(_player_profile["player_id"], name_final,
+                                                   _player_profile["best_submitted_score"])
+                        else:
+                            _player_profile["name"] = name_final
+                            save_profile(_player_profile)
+                            rank_check_phase = "submitting"
+                            submit_rank_async(_player_profile["player_id"], name_final, score)
+                        name_entry_context = None
+                    elif event.key == pygame.K_ESCAPE:
+                        entering_name = False
+                        if name_entry_context == "gameover_qualify":
+                            rank_check_phase = "skipped"
+                        name_entry_context = None
+                    elif event.key == pygame.K_BACKSPACE:
+                        player_name = player_name[:-1]
+                    elif event.unicode and event.unicode.isprintable() and len(player_name) < MAX_NAME_LEN:
+                        player_name += event.unicode
+                elif state == "menu":
+                    if menu_view == "ranking":
+                        if event.key in (pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN):
+                            menu_view = "main"
+                        elif event.key == pygame.K_n and _player_profile.get("name"):
+                            entering_name = True
+                            player_name = _player_profile.get("name", "")
+                            name_entry_context = "rename"
+                    elif menu_view == "credits":
                         if event.key in (pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN):
                             menu_view = "main"
                     else:
@@ -857,6 +1148,9 @@ def main():
                             if choice == "INICIAR JOGO":
                                 reset_game()
                                 state = "playing"
+                            elif choice == "RANKING":
+                                menu_view = "ranking"
+                                fetch_leaderboard_async()
                             elif choice == "CREDITOS":
                                 menu_view = "credits"
                             elif choice == "SAIR":
@@ -923,6 +1217,30 @@ def main():
         # enquanto pausado, 'now' fica congelado no valor de quando pausou -
         # assim nenhum cronometro (power-up, nivel, partida) avanca escondido
         now = frozen_now if paused else (pygame.time.get_ticks() - pause_accum_ms)
+
+        # acompanha a verificacao/envio do ranking apos o game over, sem travar o jogo
+        if game_over and rank_check_phase == "checking" and _rank_check_cache.get("status") in ("done", "error"):
+            if _rank_check_cache.get("status") == "error":
+                rank_check_phase = "error"
+            elif _rank_check_cache.get("qualifies"):
+                if not _player_profile.get("name"):
+                    rank_check_phase = "naming"
+                    entering_name = True
+                    player_name = ""
+                    name_entry_context = "gameover_qualify"
+                else:
+                    rank_check_phase = "submitting"
+                    submit_rank_async(_player_profile["player_id"], _player_profile["name"], score)
+            else:
+                rank_check_phase = "not_top100" if _rank_check_cache.get("reason") == "not_top100" else "not_personal_best"
+
+        if rank_check_phase == "submitting" and _rank_submit_cache.get("status") in ("ok", "error"):
+            if _rank_submit_cache["status"] == "ok":
+                _player_profile["best_submitted_score"] = score
+                save_profile(_player_profile)
+                rank_check_phase = "submitted_ok"
+            else:
+                rank_check_phase = "submitted_error"
 
         # expira a transicao de "nivel completo" (ou de rodada bonus) e avanca pro proximo nivel
         if state == "playing" and transitioning and now >= level_transition_until:
@@ -1027,6 +1345,8 @@ def main():
                     shake = 15
                     if lives <= 0:
                         game_over = True
+                        rank_check_phase = "checking"
+                        check_rank_async(score, _player_profile["player_id"])
                         balls = []
                         play_sound("game_over")
                     else:
@@ -1124,6 +1444,8 @@ def main():
         if state == "menu":
             if menu_view == "credits":
                 draw_credits(draw_surf, now)
+            elif menu_view == "ranking":
+                draw_ranking(draw_surf, now)
             else:
                 draw_menu(draw_surf, now, menu_selected)
         else:
@@ -1184,11 +1506,17 @@ def main():
             if transitioning:
                 draw_level_complete(draw_surf, level, last_bonus_gain)
 
-            if game_over:
-                draw_end_message(draw_surf, "GAME OVER", (255, 80, 80))
+            if game_over and not entering_name:
+                draw_end_message(draw_surf, "GAME OVER", (255, 80, 80), rank_check_phase)
 
             if paused:
                 draw_pause_menu(draw_surf, now, pause_selected, sound_volume)
+
+        if entering_name:
+            if name_entry_context == "rename":
+                draw_name_entry(draw_surf, player_name, "ALTERAR NOME", (0, 220, 255), "Digite o novo nome:")
+            else:
+                draw_name_entry(draw_surf, player_name)
 
         screen.blit(draw_surf, (offset_x, offset_y))
         pygame.display.flip()
