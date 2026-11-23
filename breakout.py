@@ -88,6 +88,13 @@ def init_audio():
         SOUNDS["victory"] = pygame.sndarray.make_sound(_sequence_array([
             (523, 100, 0.45, "sine"), (659, 100, 0.45, "sine"), (784, 160, 0.5, "sine"),
         ]))
+        SOUNDS["cannon_fire"] = pygame.sndarray.make_sound(_tone_array(200, 45, 0.3, "square"))
+        SOUNDS["coin"] = pygame.sndarray.make_sound(_sequence_array([
+            (880, 40, 0.4, "sine"), (1175, 70, 0.45, "sine"),
+        ]))
+        SOUNDS["buy_life"] = pygame.sndarray.make_sound(_sequence_array([
+            (440, 80, 0.45, "sine"), (660, 80, 0.45, "sine"), (880, 120, 0.5, "sine"),
+        ]))
     except Exception:
         sound_enabled = False
 
@@ -145,15 +152,27 @@ POWERUP_COLORS = {
     "W": (255, 160, 60),   # paddle larga - laranja
     "M": (160, 80, 220),   # multi-ball - roxo
     "S": (120, 200, 255),  # bola lenta - azul claro
+    "C": (220, 60, 60),    # canhoes na raquete - vermelho
 }
 WIDE_DURATION_MS = 8000
 SLOW_DURATION_MS = 8000
 SLOW_FACTOR = 0.55
 MAX_BALLS = 9
+CANNON_DURATION_MS = 8000
+CANNON_FIRE_INTERVAL_MS = 450
+CANNON_PROJECTILE_SPEED = 8
 
-# ---- Progressao de niveis ----
-MAX_LEVEL = 5
+# ---- Progressao de niveis (modo infinito: sem vitoria fixa, so aumenta a dificuldade) ----
+LEVEL_PATTERNS = 5  # variacoes de disposicao dos tijolos que se alternam por nivel
 LEVEL_TRANSITION_MS = 2500
+
+# ---- Nivel bonus (moedas), a cada N niveis concluidos ----
+BONUS_LEVEL_INTERVAL = 5
+BONUS_LEVEL_DURATION_MS = 15000
+BONUS_COIN_VALUE = 25
+
+# ---- Troca de pontos por vida extra ----
+EXTRA_LIFE_COST = 3000
 
 
 class Paddle:
@@ -266,6 +285,38 @@ def spawn_extra_ball(source, vx_offset):
     return nb
 
 
+class Projectile:
+    """Projetil disparado pelos canhoes da raquete (power-up C). Sobe e dana
+    tijolos como se fosse uma batida da bola, podendo quebra-los."""
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.w = 4
+        self.h = 12
+        self.vy = -CANNON_PROJECTILE_SPEED
+
+    def rect(self):
+        return pygame.Rect(int(self.x - self.w / 2), int(self.y - self.h),
+                            self.w, self.h)
+
+    def update(self):
+        self.y += self.vy
+
+    def draw(self, surf):
+        pygame.draw.rect(surf, (255, 140, 60), self.rect(), border_radius=2)
+
+
+def draw_cannons(surf, paddle):
+    """Desenha os dois canhoes nas pontas da raquete enquanto o power-up C esta ativo."""
+    turret_w, turret_h = 10, 16
+    left = pygame.Rect(int(paddle.x) - 2, paddle.y - turret_h + 4, turret_w, turret_h)
+    right = pygame.Rect(int(paddle.x + paddle.width) - turret_w + 2, paddle.y - turret_h + 4, turret_w, turret_h)
+    for r in (left, right):
+        pygame.draw.rect(surf, POWERUP_COLORS["C"], r, border_radius=3)
+        pygame.draw.rect(surf, BLACK, r, width=2, border_radius=3)
+
+
 class Brick:
     def __init__(self, x, y, w, h, color, lives=1):
         self.rect = pygame.Rect(x, y, w, h)
@@ -359,11 +410,71 @@ class PowerUp:
         surf.blit(label, (r.centerx - label.get_width() // 2, r.centery - label.get_height() // 2))
 
 
+class BonusCoin:
+    """Moeda estatica da rodada bonus - some ao ser tocada pela bola e da pontos."""
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.radius = 12
+        self.alive = True
+
+    def rect(self):
+        return pygame.Rect(int(self.x - self.radius), int(self.y - self.radius),
+                            self.radius * 2, self.radius * 2)
+
+    def draw(self, surf):
+        if not self.alive:
+            return
+        pygame.draw.circle(surf, (255, 215, 0), (int(self.x), int(self.y)), self.radius)
+        pygame.draw.circle(surf, (120, 90, 0), (int(self.x), int(self.y)), self.radius, width=2)
+
+
+def make_bonus_coins():
+    """Grade de moedas da rodada bonus - sem tijolos, so pontos extras."""
+    coins = []
+    rows, cols = 5, 9
+    top = 120
+    spacing_y = 42
+    spacing_x = (WIDTH - 120) / (cols - 1)
+    for row in range(rows):
+        for col in range(cols):
+            x = 60 + col * spacing_x
+            y = top + row * spacing_y
+            coins.append(BonusCoin(x, y))
+    return coins
+
+
+def _pattern_present(pattern, row, col, rows, cols):
+    """Decide se a celula (row, col) do grid tem tijolo, de acordo com o padrao
+    do nivel. Padrao 0 e a grade classica cheia (sempre usada no nivel 1).
+    Os demais abrem vãos diferentes a cada rotacao de nivel, pra nao repetir
+    sempre a mesma disposicao, sem ficar absurdo."""
+    if pattern == 0:
+        return True
+    if pattern == 1:  # friso vertical: uma coluna vazia a cada 4
+        return col % 4 != 3
+    if pattern == 2:  # piramide: fileiras mais perto da raquete ficam mais estreitas
+        margin = min(row // 2, (cols - 1) // 2)
+        return margin <= col < cols - margin
+    if pattern == 3:  # buraco em losango no meio do grid
+        cx, cy = (cols - 1) / 2, (rows - 1) / 2
+        dist = abs(col - cx) + abs(row - cy)
+        return dist > 1.5
+    if pattern == 4:  # fileiras pares perdem as pontas, impares ficam cheias
+        if row % 2 == 0:
+            return col != 0 and col != cols - 1
+        return True
+    return True
+
+
 def make_bricks(level=1):
     """Monta o grid de tijolos. A fileira mais perto da raquete (a primeira que
     a bola encontra ao jogar) quebra com 1 batida; subindo dai pra cima as
     fileiras exigem mais batidas, ate um maximo de 3. Conforme o nivel sobe, o
-    grid cresce (mais linhas), mas o teto de vida por tijolo continua fixo em 3."""
+    grid cresce (mais linhas), mas o teto de vida por tijolo continua fixo em 3.
+    A disposicao das celulas tambem roda entre alguns padroes (LEVEL_PATTERNS)
+    pra variar o layout entre niveis - o nivel 1 sempre usa a grade classica."""
     bricks = []
     rows = min(5 + (level - 1) // 2, 8)
     cols = 10
@@ -379,6 +490,8 @@ def make_bricks(level=1):
     boundary_1 = 1
     boundary_2 = 2
 
+    pattern = 0 if level == 1 else (level - 1) % LEVEL_PATTERNS
+
     for row in range(rows):
         from_paddle = rows - 1 - row  # 0 = fileira mais perto da raquete
         if from_paddle < boundary_1:
@@ -388,6 +501,8 @@ def make_bricks(level=1):
         else:
             lives = 3  # maximo de 3 toques de vida, fixo, independente do nivel
         for col in range(cols):
+            if not _pattern_present(pattern, row, col, rows, cols):
+                continue
             x = offset_side + col * (brick_w + padding)
             y = offset_top + row * (brick_h + padding)
             bricks.append(Brick(x, y, brick_w, brick_h, BRICK_COLORS[row % len(BRICK_COLORS)], lives))
@@ -563,13 +678,16 @@ def draw_credits(surf, now_ms):
     surf.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
 
     lines = [
+        "Criacao: Felipe Voigt Postai",
+        "",
         "Jogo desenvolvido em Python + Pygame",
         "Baseado no classico Arkanoid / Breakout",
         "",
         "Controles: SETAS ou A / D para mover a raquete",
         "ESPACO lanca a bola e confirma opcoes do menu",
+        "V troca pontos por uma vida extra (se ja perdeu alguma)",
         "",
-        "W = raquete larga   M = multi-bola   S = bola lenta",
+        "W = raquete larga   M = multi-bola   S = bola lenta   C = canhoes",
         "",
         "Trabalho AV2 - Linguagens - Uniasselvi",
     ]
@@ -599,12 +717,17 @@ def draw_end_message(surf, text, color):
     surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT // 2 + 20))
 
 
-def draw_level_complete(surf, level):
-    """Overlay rapido de transicao mostrado entre um nivel e o proximo."""
+def draw_level_complete(surf, level, bonus_gain=0):
+    """Overlay rapido de transicao mostrado entre um nivel e o proximo. Se vem
+    logo apos uma rodada bonus (bonus_gain > 0), mostra o total de moedas
+    pontuadas em vez do aviso de nivel completo."""
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 160))
     surf.blit(overlay, (0, 0))
-    msg = big_font.render(f"NIVEL {level} COMPLETO!", True, (120, 230, 90))
+    if bonus_gain > 0:
+        msg = big_font.render(f"BONUS CONCLUIDO! +{bonus_gain} PONTOS", True, (255, 215, 0))
+    else:
+        msg = big_font.render(f"NIVEL {level} COMPLETO!", True, (120, 230, 90))
     sub = font.render("Preparando o proximo nivel...", True, WHITE)
     surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT // 2 - 30))
     surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT // 2 + 30))
@@ -656,40 +779,57 @@ def main():
     bricks = make_bricks(level)
     particles = []
     powerups = []
+    projectiles = []
     score = 0
     lives = 3
     shake = 0
     game_over = False
-    won = False
     transitioning = False
     level_transition_until = 0
 
     paddle_wide_until = 0
     slow_until = 0
+    paddle_cannons_until = 0
+    cannon_last_fire = {"left": 0, "right": 0}
+
+    bonus_active = False
+    bonus_until = 0
+    bonus_coins = []
+    bonus_score_gain = 0
+    last_bonus_gain = 0
 
     game_start_ticks = pygame.time.get_ticks()
     elapsed_ms = 0
 
     def reset_game():
-        nonlocal paddle, balls, bricks, particles, powerups, score, lives, shake
-        nonlocal game_over, won, paddle_wide_until, slow_until, game_start_ticks, elapsed_ms
+        nonlocal paddle, balls, bricks, particles, powerups, projectiles, score, lives, shake
+        nonlocal game_over, paddle_wide_until, slow_until, game_start_ticks, elapsed_ms
+        nonlocal paddle_cannons_until, cannon_last_fire
         nonlocal level, transitioning, level_transition_until
         nonlocal paused, pause_selected, pause_accum_ms, frozen_now
+        nonlocal bonus_active, bonus_until, bonus_coins, bonus_score_gain, last_bonus_gain
         paddle = Paddle()
         balls = [Ball()]
         level = 1
         bricks = make_bricks(level)
         particles = []
         powerups = []
+        projectiles = []
         score = 0
         lives = 3
         shake = 0
         game_over = False
-        won = False
         transitioning = False
         level_transition_until = 0
         paddle_wide_until = 0
         slow_until = 0
+        paddle_cannons_until = 0
+        cannon_last_fire = {"left": 0, "right": 0}
+        bonus_active = False
+        bonus_until = 0
+        bonus_coins = []
+        bonus_score_gain = 0
+        last_bonus_gain = 0
         game_start_ticks = pygame.time.get_ticks()
         elapsed_ms = 0
         paused = False
@@ -722,12 +862,12 @@ def main():
                             elif choice == "SAIR":
                                 pygame.quit()
                                 sys.exit()
-                elif event.key == pygame.K_r and (game_over or won):
+                elif event.key == pygame.K_r and game_over:
                     reset_game()
                     state = "menu"
                     menu_view = "main"
                     menu_selected = 0
-                elif event.key in (pygame.K_p, pygame.K_ESCAPE) and not game_over and not won and not transitioning:
+                elif event.key in (pygame.K_p, pygame.K_ESCAPE) and not game_over and not transitioning:
                     t = pygame.time.get_ticks()
                     if not paused:
                         paused = True
@@ -758,7 +898,7 @@ def main():
                             state = "menu"
                             menu_view = "main"
                             menu_selected = 0
-                elif not game_over and not won and not transitioning:
+                elif not game_over and not transitioning:
                     direction = None
                     launch_pressed = False
                     if event.key in (pygame.K_LEFT, pygame.K_a):
@@ -769,6 +909,11 @@ def main():
                         launch_pressed = True
                     elif event.key == pygame.K_SPACE:
                         launch_pressed = True
+                    elif event.key == pygame.K_v and not bonus_active:
+                        if lives < 3 and score >= EXTRA_LIFE_COST:
+                            score -= EXTRA_LIFE_COST
+                            lives += 1
+                            play_sound("buy_life")
                     if launch_pressed:
                         for b in balls:
                             if b.stuck:
@@ -779,18 +924,21 @@ def main():
         # assim nenhum cronometro (power-up, nivel, partida) avanca escondido
         now = frozen_now if paused else (pygame.time.get_ticks() - pause_accum_ms)
 
-        # expira a transicao de "nivel completo" e avanca pro proximo nivel
+        # expira a transicao de "nivel completo" (ou de rodada bonus) e avanca pro proximo nivel
         if state == "playing" and transitioning and now >= level_transition_until:
             transitioning = False
             level += 1
             bricks = make_bricks(level)
             balls = [Ball()]
             powerups = []
+            projectiles = []
             particles = []
             paddle_wide_until = 0
             slow_until = 0
+            paddle_cannons_until = 0
+            last_bonus_gain = 0
 
-        if state == "playing" and not game_over and not won and not transitioning and not paused:
+        if state == "playing" and not game_over and not transitioning and not paused:
             elapsed_ms = now - game_start_ticks
 
             paddle.update(keys)
@@ -817,76 +965,146 @@ def main():
                     b.vx = max(-9, min(9, b.vx))
                     play_sound("hit_paddle")
 
-            # colisao com tijolos
-            for b in balls:
-                if b.stuck:
-                    continue
-                for brick in bricks:
-                    if brick.alive and b.rect().colliderect(brick.rect):
-                        destroyed = brick.hit()
-                        b.vy *= -1
-                        if destroyed:
-                            score += 10
-                            shake = 8
-                            play_sound("brick_destroy")
-                            for _ in range(18):
-                                particles.append(Particle(brick.rect.centerx, brick.rect.centery, brick.base_color))
-                            if random.random() < POWERUP_DROP_CHANCE:
-                                kind = random.choice(list(POWERUP_COLORS.keys()))
-                                powerups.append(PowerUp(brick.rect.centerx, brick.rect.centery, kind))
-                        else:
-                            shake = 4
-                            play_sound("brick_hit")
-                        break
+            # canhoes (power-up C): disparam projeteis das duas pontas da raquete
+            if now < paddle_cannons_until:
+                for side in ("left", "right"):
+                    if now - cannon_last_fire[side] >= CANNON_FIRE_INTERVAL_MS:
+                        cannon_last_fire[side] = now
+                        px = paddle.x + 7 if side == "left" else paddle.x + paddle.width - 7
+                        projectiles.append(Projectile(px, paddle.y))
+                        play_sound("cannon_fire")
 
-            # queda das bolas no vazio - só perde vida quando TODAS caem
-            survivors = [b for b in balls if not (b.y - b.radius > HEIGHT)]
-            if not survivors:
-                lives -= 1
-                shake = 15
-                if lives <= 0:
-                    game_over = True
-                    balls = []
-                    play_sound("game_over")
+            for proj in projectiles:
+                proj.update()
+            projectiles[:] = [p for p in projectiles if p.y + p.h > 0]
+
+            if not bonus_active:
+                # colisao com tijolos
+                for b in balls:
+                    if b.stuck:
+                        continue
+                    for brick in bricks:
+                        if brick.alive and b.rect().colliderect(brick.rect):
+                            destroyed = brick.hit()
+                            b.vy *= -1
+                            if destroyed:
+                                score += 10
+                                shake = 8
+                                play_sound("brick_destroy")
+                                for _ in range(18):
+                                    particles.append(Particle(brick.rect.centerx, brick.rect.centery, brick.base_color))
+                                if random.random() < POWERUP_DROP_CHANCE:
+                                    kind = random.choice(list(POWERUP_COLORS.keys()))
+                                    powerups.append(PowerUp(brick.rect.centerx, brick.rect.centery, kind))
+                            else:
+                                shake = 4
+                                play_sound("brick_hit")
+                            break
+
+                # canhoes atingindo tijolos - mesmo dano/quebra de uma batida de bola
+                for proj in projectiles[:]:
+                    for brick in bricks:
+                        if brick.alive and proj.rect().colliderect(brick.rect):
+                            destroyed = brick.hit()
+                            if destroyed:
+                                score += 10
+                                shake = 6
+                                play_sound("brick_destroy")
+                                for _ in range(14):
+                                    particles.append(Particle(brick.rect.centerx, brick.rect.centery, brick.base_color))
+                                if random.random() < POWERUP_DROP_CHANCE:
+                                    kind = random.choice(list(POWERUP_COLORS.keys()))
+                                    powerups.append(PowerUp(brick.rect.centerx, brick.rect.centery, kind))
+                            else:
+                                play_sound("brick_hit")
+                            projectiles.remove(proj)
+                            break
+
+                # queda das bolas no vazio - só perde vida quando TODAS caem
+                survivors = [b for b in balls if not (b.y - b.radius > HEIGHT)]
+                if not survivors:
+                    lives -= 1
+                    shake = 15
+                    if lives <= 0:
+                        game_over = True
+                        balls = []
+                        play_sound("game_over")
+                    else:
+                        balls = [Ball()]
+                        play_sound("lose_life")
                 else:
-                    balls = [Ball()]
-                    play_sound("lose_life")
+                    balls = survivors
+
+                # power-ups caindo / coleta pela raquete
+                still_falling = []
+                for pu in powerups:
+                    pu.update()
+                    if pu.rect().colliderect(paddle.rect()):
+                        play_sound("powerup")
+                        if pu.kind == "W":
+                            paddle_wide_until = now + WIDE_DURATION_MS
+                        elif pu.kind == "S":
+                            slow_until = now + SLOW_DURATION_MS
+                        elif pu.kind == "C":
+                            paddle_cannons_until = now + CANNON_DURATION_MS
+                            cannon_last_fire["left"] = now - CANNON_FIRE_INTERVAL_MS
+                            cannon_last_fire["right"] = now - CANNON_FIRE_INTERVAL_MS
+                        elif pu.kind == "M":
+                            if all(b.stuck for b in balls):
+                                direction = random.choice([-1, 1])
+                                for b in balls:
+                                    if b.stuck:
+                                        b.launch(direction)
+                            source = next((b for b in balls if not b.stuck), None)
+                            if source is not None:
+                                to_add = min(2, MAX_BALLS - len(balls))
+                                for i in range(to_add):
+                                    offset = -3 if i == 0 else 3
+                                    balls.append(spawn_extra_ball(source, offset))
+                        continue
+                    if pu.y - pu.h / 2 > HEIGHT:
+                        continue
+                    still_falling.append(pu)
+                powerups = still_falling
+
+                if bricks and all(not b.alive for b in bricks):
+                    play_sound("victory")
+                    if level % BONUS_LEVEL_INTERVAL == 0:
+                        bonus_active = True
+                        bonus_until = now + BONUS_LEVEL_DURATION_MS
+                        bonus_coins = make_bonus_coins()
+                        bonus_score_gain = 0
+                        balls = [Ball()]
+                        paddle_wide_until = 0
+                        slow_until = 0
+                        paddle_cannons_until = 0
+                        powerups = []
+                        projectiles = []
+                    else:
+                        transitioning = True
+                        level_transition_until = now + LEVEL_TRANSITION_MS
             else:
-                balls = survivors
+                # rodada bonus: só moedas, sem tijolos nem perda de vida em jogo
+                for b in balls:
+                    if b.stuck:
+                        continue
+                    for coin in bonus_coins:
+                        if coin.alive and b.rect().colliderect(coin.rect()):
+                            coin.alive = False
+                            score += BONUS_COIN_VALUE
+                            bonus_score_gain += BONUS_COIN_VALUE
+                            shake = 3
+                            play_sound("coin")
+                            for _ in range(10):
+                                particles.append(Particle(coin.x, coin.y, (255, 215, 0)))
+                bonus_coins = [c for c in bonus_coins if c.alive]
 
-            # power-ups caindo / coleta pela raquete
-            still_falling = []
-            for pu in powerups:
-                pu.update()
-                if pu.rect().colliderect(paddle.rect()):
-                    play_sound("powerup")
-                    if pu.kind == "W":
-                        paddle_wide_until = now + WIDE_DURATION_MS
-                    elif pu.kind == "S":
-                        slow_until = now + SLOW_DURATION_MS
-                    elif pu.kind == "M":
-                        if all(b.stuck for b in balls):
-                            direction = random.choice([-1, 1])
-                            for b in balls:
-                                if b.stuck:
-                                    b.launch(direction)
-                        source = next((b for b in balls if not b.stuck), None)
-                        if source is not None:
-                            to_add = min(2, MAX_BALLS - len(balls))
-                            for i in range(to_add):
-                                offset = -3 if i == 0 else 3
-                                balls.append(spawn_extra_ball(source, offset))
-                    continue
-                if pu.y - pu.h / 2 > HEIGHT:
-                    continue
-                still_falling.append(pu)
-            powerups = still_falling
+                survivors = [b for b in balls if not (b.y - b.radius > HEIGHT)]
+                balls = survivors if survivors else [Ball()]
 
-            if bricks and all(not b.alive for b in bricks):
-                play_sound("victory")
-                if level >= MAX_LEVEL:
-                    won = True
-                else:
+                if not bonus_coins or now >= bonus_until:
+                    bonus_active = False
+                    last_bonus_gain = bonus_score_gain
                     transitioning = True
                     level_transition_until = now + LEVEL_TRANSITION_MS
 
@@ -910,19 +1128,29 @@ def main():
                 draw_menu(draw_surf, now, menu_selected)
         else:
             draw_starry_background(draw_surf, now)
-            for brick in bricks:
-                brick.draw(draw_surf)
+            if bonus_active:
+                for coin in bonus_coins:
+                    coin.draw(draw_surf)
+            else:
+                for brick in bricks:
+                    brick.draw(draw_surf)
             paddle.draw(draw_surf)
+            if now < paddle_cannons_until:
+                draw_cannons(draw_surf, paddle)
             for b in balls:
                 b.draw(draw_surf)
             for pu in powerups:
                 pu.draw(draw_surf)
+            for proj in projectiles:
+                proj.draw(draw_surf)
             for p in particles:
                 p.draw(draw_surf)
 
             # placar em destaque (fonte maior, cor dourada) - é a info principal do HUD
             score_text = score_font.render(f"PONTOS: {score}", True, SCORE_COLOR)
-            level_text = font.render(f"NIVEL: {level}", True, WHITE)
+            level_label = "RODADA BONUS" if bonus_active else f"NIVEL: {level}"
+            level_color = (255, 215, 0) if bonus_active else WHITE
+            level_text = font.render(level_label, True, level_color)
             lives_text = font.render(f"VIDAS: {lives}", True, WHITE)
             time_text = font.render(format_time(elapsed_ms), True, WHITE)
             draw_surf.blit(score_text, (20, 14))
@@ -930,26 +1158,34 @@ def main():
             draw_surf.blit(lives_text, (WIDTH - 150, 20))
             draw_surf.blit(time_text, (WIDTH // 2 - time_text.get_width() // 2, 20))
 
-            # contagem regressiva dos power-ups ativos (tempo real, nao frames)
-            # só faz sentido mostrar durante o jogo, não na tela de game over/vitória
-            if not game_over and not won:
+            # contagem regressiva dos power-ups ativos / rodada bonus (tempo real, nao frames)
+            # só faz sentido mostrar durante o jogo, não na tela de game over
+            if not game_over:
                 status_y = HEIGHT - 72
                 if now < paddle_wide_until:
                     status_y = draw_powerup_timer(draw_surf, "RAQUETE LARGA", paddle_wide_until, now,
                                                    POWERUP_COLORS["W"], status_y)
                 if now < slow_until:
-                    draw_powerup_timer(draw_surf, "BOLA LENTA", slow_until, now,
+                    status_y = draw_powerup_timer(draw_surf, "BOLA LENTA", slow_until, now,
                                         POWERUP_COLORS["S"], status_y)
+                if now < paddle_cannons_until:
+                    status_y = draw_powerup_timer(draw_surf, "CANHOES", paddle_cannons_until, now,
+                                        POWERUP_COLORS["C"], status_y)
+                if bonus_active:
+                    draw_powerup_timer(draw_surf, "TEMPO BONUS", bonus_until, now,
+                                        (255, 215, 0), status_y)
+
+                if lives < 3 and not bonus_active:
+                    cost_color = (120, 230, 90) if score >= EXTRA_LIFE_COST else (140, 140, 150)
+                    buy_hint = status_font.render(
+                        f"V: trocar {EXTRA_LIFE_COST} pts por 1 vida extra", True, cost_color)
+                    draw_surf.blit(buy_hint, (WIDTH - buy_hint.get_width() - 20, HEIGHT - 30))
 
             if transitioning:
-                draw_level_complete(draw_surf, level)
+                draw_level_complete(draw_surf, level, last_bonus_gain)
 
             if game_over:
                 draw_end_message(draw_surf, "GAME OVER", (255, 80, 80))
-            elif won:
-                draw_end_message(draw_surf, "VOCE VENCEU!", (120, 230, 90))
-                level_info = font.render(f"Nivel final alcancado: {level}", True, WHITE)
-                draw_surf.blit(level_info, (WIDTH // 2 - level_info.get_width() // 2, HEIGHT // 2 + 60))
 
             if paused:
                 draw_pause_menu(draw_surf, now, pause_selected, sound_volume)
