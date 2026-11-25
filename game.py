@@ -18,7 +18,7 @@ from constants import *
 
 pygame.display.set_icon(ui.criar_superficie_icone())
 
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.SCALED)
 pygame.display.set_caption("Breakout")
 clock = pygame.time.Clock()
 
@@ -140,6 +140,34 @@ def principal():
         pause_accum_ms = 0
         frozen_now = 0
 
+    def executar_opcao_menu(choice):
+        nonlocal state, menu_view
+        if choice == "INICIAR JOGO":
+            reiniciar_jogo()
+            state = "playing"
+        elif choice == "RANKING":
+            menu_view = "ranking"
+            leaderboard.buscar_ranking_async()
+        elif choice == "CREDITOS":
+            menu_view = "credits"
+        elif choice == "SAIR":
+            pygame.quit()
+            sys.exit()
+
+    def executar_opcao_pausa(choice):
+        nonlocal paused, pause_accum_ms, state, menu_view, menu_selected
+        if choice == "CONTINUAR":
+            t = pygame.time.get_ticks()
+            paused = False
+            pause_accum_ms = t - frozen_now
+        elif choice == "REINICIAR":
+            reiniciar_jogo()
+        elif choice == "MENU INICIAL":
+            reiniciar_jogo()
+            state = "menu"
+            menu_view = "main"
+            menu_selected = 0
+
     now = 0
     while True:
         for event in pygame.event.get():
@@ -158,6 +186,16 @@ def principal():
                         inv_categoria = "bolas"
                         inv_idx = 0
                         inv_msg = ""
+                    else:
+                        for i, rect in ui.obter_retangulos_menu().items():
+                            if rect.collidepoint(event.pos):
+                                menu_selected = i
+                                executar_opcao_menu(MENU_OPTIONS[i])
+                elif paused:
+                    for i, rect in ui.obter_retangulos_menu_pausa().items():
+                        if rect.collidepoint(event.pos):
+                            pause_selected = i
+                            executar_opcao_pausa(PAUSE_OPTIONS[i])
                 elif state == "menu" and menu_view == "loja":
                     if ui.obter_retangulo_fechar_loja().collidepoint(event.pos):
                         menu_view = "main"
@@ -190,6 +228,8 @@ def principal():
                                 elif right_arrow.collidepoint(event.pos):
                                     inv_idx = (inv_idx + 1) % len(lista)
             if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F11:
+                    pygame.display.toggle_fullscreen()
                 if event.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):
                     codigo_secreto_buffer.append(event.key)
                     codigo_secreto_buffer[:] = codigo_secreto_buffer[-len(CODIGO_SECRETO):]
@@ -355,18 +395,7 @@ def principal():
                         elif event.key in (pygame.K_DOWN, pygame.K_s):
                             menu_selected = (menu_selected + 1) % len(MENU_OPTIONS)
                         elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
-                            choice = MENU_OPTIONS[menu_selected]
-                            if choice == "INICIAR JOGO":
-                                reiniciar_jogo()
-                                state = "playing"
-                            elif choice == "RANKING":
-                                menu_view = "ranking"
-                                leaderboard.buscar_ranking_async()
-                            elif choice == "CREDITOS":
-                                menu_view = "credits"
-                            elif choice == "SAIR":
-                                pygame.quit()
-                                sys.exit()
+                            executar_opcao_menu(MENU_OPTIONS[menu_selected])
                 elif event.key == pygame.K_r and game_over:
                     reiniciar_jogo()
                     state = "menu"
@@ -391,18 +420,7 @@ def principal():
                     elif event.key in (pygame.K_RIGHT, pygame.K_d) and PAUSE_OPTIONS[pause_selected] == "VOLUME":
                         audio.sound_volume = min(1.0, round(audio.sound_volume + 0.1, 2))
                     elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
-                        choice = PAUSE_OPTIONS[pause_selected]
-                        if choice == "CONTINUAR":
-                            t = pygame.time.get_ticks()
-                            paused = False
-                            pause_accum_ms = t - frozen_now
-                        elif choice == "REINICIAR":
-                            reiniciar_jogo()
-                        elif choice == "MENU INICIAL":
-                            reiniciar_jogo()
-                            state = "menu"
-                            menu_view = "main"
-                            menu_selected = 0
+                        executar_opcao_pausa(PAUSE_OPTIONS[pause_selected])
                 elif not game_over and not transitioning:
                     direction = None
                     launch_pressed = False
@@ -670,8 +688,12 @@ def principal():
             elif menu_view == "inventario":
                 ui.desenhar_inventario(draw_surf, now, inv_categoria, inv_idx, inv_msg, inv_msg_until)
             else:
-                loja_hover = ui.obter_retangulo_icone_loja().collidepoint(pygame.mouse.get_pos())
-                inv_hover = ui.obter_retangulo_icone_inventario().collidepoint(pygame.mouse.get_pos())
+                mouse_pos = pygame.mouse.get_pos()
+                loja_hover = ui.obter_retangulo_icone_loja().collidepoint(mouse_pos)
+                inv_hover = ui.obter_retangulo_icone_inventario().collidepoint(mouse_pos)
+                for i, rect in ui.obter_retangulos_menu().items():
+                    if rect.collidepoint(mouse_pos):
+                        menu_selected = i
                 ui.desenhar_menu(draw_surf, now, menu_selected, loja_hover, inv_hover)
         else:
             ui.desenhar_fundo_estrelado(draw_surf, now)
@@ -733,6 +755,10 @@ def principal():
                                           now_ms=now)
 
             if paused:
+                mouse_pos = pygame.mouse.get_pos()
+                for i, rect in ui.obter_retangulos_menu_pausa().items():
+                    if rect.collidepoint(mouse_pos):
+                        pause_selected = i
                 ui.desenhar_menu_pausa(draw_surf, now, pause_selected, audio.sound_volume)
 
         if entering_name:
