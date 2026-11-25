@@ -20,6 +20,7 @@ __all__ = [
     "desenhar_notificacao", "desenhar_raio_secreto", "desenhar_inventario",
     "desenhar_icone_inventario", "obter_retangulo_icone_inventario",
     "obter_retangulos_abas_inventario", "obter_itens_possuidos",
+    "obter_retangulos_menu", "obter_retangulos_menu_pausa",
 ]
 
 
@@ -259,6 +260,21 @@ def desenhar_icone_loja(surf, now_ms, hover=False):
         surf.blit(label, (label_bg.x + 4, label_bg.y + 2))
 
 
+def obter_retangulos_menu():
+    """Retangulo clicavel/hover de cada opcao do menu principal, na mesma
+    posicao usada pelo desenho (largura calculada pro pior caso, com ou sem
+    os '> <' do item selecionado, pra nao mudar de tamanho ao passar o mouse)."""
+    option_y, spacing = 300, 46
+    text_h = menu_hint_font.get_height()
+    rects = {}
+    for i, option in enumerate(MENU_OPTIONS):
+        w = max(menu_hint_font.size(option)[0], menu_hint_font.size(f"> {option} <")[0])
+        rect = pygame.Rect(0, option_y + i * spacing - 4, w + 24, text_h + 8)
+        rect.centerx = WIDTH // 2
+        rects[i] = rect
+    return rects
+
+
 def desenhar_menu(surf, now_ms, selected, loja_hover=False, inv_hover=False):
     desenhar_fundo_retro(surf, now_ms)
     desenhar_titulo_pulsante(surf, now_ms, (WIDTH // 2, 120))
@@ -298,6 +314,7 @@ def desenhar_creditos(surf, now_ms):
         "",
         "W = raquete larga   M = multi-bola   S = bola lenta   C = canhoes",
         "Colete moedas na rodada bonus e gaste na LOJA do menu principal",
+        "F11 alterna tela cheia",
         "",
         "Trabalho AV2 - Linguagens - Uniasselvi",
     ]
@@ -966,6 +983,24 @@ def desenhar_nivel_completo(surf, level, bonus_gain=0):
     sub = font.render("Preparando o proximo nivel...", True, WHITE)
     surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT // 2 - 30))
     surf.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT // 2 + 30))
+
+
+def obter_retangulos_menu_pausa():
+    """Mesma ideia de obter_retangulos_menu(), mas pro menu de pausa - o item
+    VOLUME mostra uma porcentagem, entao usa uma largura generosa fixa pra
+    cobrir qualquer valor de 0 a 100%."""
+    option_y, spacing = 230, 48
+    text_h = menu_hint_font.get_height()
+    rects = {}
+    for i, option in enumerate(PAUSE_OPTIONS):
+        if option == "VOLUME":
+            w = max(menu_hint_font.size("VOLUME: 100%")[0], menu_hint_font.size("< VOLUME: 100% >")[0])
+        else:
+            w = max(menu_hint_font.size(option)[0], menu_hint_font.size(f"> {option} <")[0])
+        rect = pygame.Rect(0, option_y + i * spacing - 4, w + 24, text_h + 8)
+        rect.centerx = WIDTH // 2
+        rects[i] = rect
+    return rects
 
 
 def desenhar_menu_pausa(surf, now_ms, selected, volume):
