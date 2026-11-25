@@ -46,6 +46,20 @@ def _gerar_sequencia(notes):
     return np.concatenate(pieces)
 
 
+def _gerar_ruido(duration_ms, volume=0.5, sample_rate=AUDIO_SAMPLE_RATE):
+    """Rajada de ruido branco (com o mesmo envelope de fade das notas) - usada
+    pra crepitar como estatica/eletricidade, coisa que um tom puro nao faz."""
+    assert np is not None
+    n_samples = max(1, int(sample_rate * duration_ms / 1000))
+    data = np.random.uniform(-1, 1, n_samples)
+    fade = max(1, min(n_samples // 4, int(sample_rate * 0.005)))
+    envelope = np.ones(n_samples)
+    envelope[:fade] = np.linspace(0, 1, fade)
+    envelope[-fade:] = np.linspace(1, 0, fade)
+    data = data * envelope * volume
+    return (data * 32767).astype(np.int16)
+
+
 def iniciar_audio():
     """Inicializa o mixer e constroi cada efeito sonoro na hora, via numpy.
     Se nao houver numpy ou dispositivo de audio disponivel, desativa o som
@@ -85,6 +99,14 @@ def iniciar_audio():
         ]))
         SOUNDS["buy_life"] = pygame.sndarray.make_sound(_gerar_sequencia([
             (440, 80, 0.45, "sine"), (660, 80, 0.45, "sine"), (880, 120, 0.5, "sine"),
+        ]))
+        SOUNDS["raio_caindo"] = pygame.sndarray.make_sound(np.concatenate([
+            _gerar_ruido(35, 0.25), _gerar_tom(1900, 25, 0.3, "square"),
+            _gerar_ruido(35, 0.25), _gerar_tom(2300, 25, 0.3, "square"),
+            _gerar_ruido(40, 0.25), _gerar_tom(1600, 30, 0.3, "square"),
+        ]))
+        SOUNDS["trovao"] = pygame.sndarray.make_sound(np.concatenate([
+            _gerar_ruido(50, 0.4), _gerar_tom(90, 160, 0.55, "square"), _gerar_tom(60, 220, 0.5, "square"),
         ]))
     except Exception:
         sound_enabled = False

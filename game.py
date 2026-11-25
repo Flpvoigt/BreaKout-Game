@@ -24,6 +24,13 @@ clock = pygame.time.Clock()
 
 audio.iniciar_audio()
 
+# Codigo secreto (estilo Konami) que desbloqueia a raquete ultra-rara
+# "tempestade" - funciona em qualquer tela, so observando as setas digitadas.
+CODIGO_SECRETO = [
+    pygame.K_UP, pygame.K_UP, pygame.K_DOWN, pygame.K_DOWN,
+    pygame.K_LEFT, pygame.K_RIGHT, pygame.K_LEFT, pygame.K_RIGHT,
+]
+
 
 def principal():
     state = "menu"  # "menu" ou "playing"
@@ -34,6 +41,20 @@ def principal():
     loja_idx = 0
     loja_msg = ""
     loja_msg_until = 0
+
+    codigo_secreto_buffer = []
+    codigo_secreto_msg = ""
+    codigo_secreto_msg_until = 0
+    raio_secreto_ativo = False
+    raio_secreto_inicio = 0
+    raio_secreto_x = 0
+    raio_secreto_trovao_tocado = False
+    revelar_skin_lendaria = False
+
+    inv_categoria = "bolas"
+    inv_idx = 0
+    inv_msg = ""
+    inv_msg_until = 0
 
     paused = False
     pause_selected = 0
@@ -81,6 +102,7 @@ def principal():
         nonlocal level, transitioning, level_transition_until
         nonlocal paused, pause_selected, pause_accum_ms, frozen_now
         nonlocal bonus_active, bonus_until, bonus_coins, bonus_score_gain, last_bonus_gain
+        nonlocal raio_secreto_ativo, raio_secreto_trovao_tocado, revelar_skin_lendaria
         paddle = Paddle()
         balls = [Ball()]
         level = 1
@@ -108,6 +130,9 @@ def principal():
         bonus_coins = []
         bonus_score_gain = 0
         last_bonus_gain = 0
+        raio_secreto_ativo = False
+        raio_secreto_trovao_tocado = False
+        revelar_skin_lendaria = False
         game_start_ticks = pygame.time.get_ticks()
         elapsed_ms = 0
         paused = False
@@ -115,6 +140,7 @@ def principal():
         pause_accum_ms = 0
         frozen_now = 0
 
+    now = 0
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -127,6 +153,11 @@ def principal():
                         loja_categoria = "bolas"
                         loja_idx = 0
                         loja_msg = ""
+                    elif ui.obter_retangulo_icone_inventario().collidepoint(event.pos):
+                        menu_view = "inventario"
+                        inv_categoria = "bolas"
+                        inv_idx = 0
+                        inv_msg = ""
                 elif state == "menu" and menu_view == "loja":
                     if ui.obter_retangulo_fechar_loja().collidepoint(event.pos):
                         menu_view = "main"
@@ -142,7 +173,50 @@ def principal():
                                 loja_idx = (loja_idx - 1) % len(lista)
                             elif right_arrow.collidepoint(event.pos):
                                 loja_idx = (loja_idx + 1) % len(lista)
+                elif state == "menu" and menu_view == "inventario":
+                    if ui.obter_retangulo_fechar_loja().collidepoint(event.pos):
+                        menu_view = "main"
+                    else:
+                        for cat_id, rect in ui.obter_retangulos_abas_inventario().items():
+                            if rect.collidepoint(event.pos):
+                                inv_categoria = cat_id
+                                inv_idx = 0
+                        if inv_categoria != "pocoes":
+                            lista = ui.obter_itens_possuidos(inv_categoria)
+                            left_arrow, right_arrow = ui.obter_retangulos_setas_loja()
+                            if lista:
+                                if left_arrow.collidepoint(event.pos):
+                                    inv_idx = (inv_idx - 1) % len(lista)
+                                elif right_arrow.collidepoint(event.pos):
+                                    inv_idx = (inv_idx + 1) % len(lista)
             if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):
+                    codigo_secreto_buffer.append(event.key)
+                    codigo_secreto_buffer[:] = codigo_secreto_buffer[-len(CODIGO_SECRETO):]
+                    if codigo_secreto_buffer == CODIGO_SECRETO:
+                        codigo_secreto_buffer.clear()
+                        ja_tinha = profile.possui_skin_raquete("tempestade")
+                        profile.desbloquear_skin_raquete("tempestade")
+                        profile.equipar_skin_raquete("tempestade")
+                        paddle_visivel = state == "playing" and not game_over and not transitioning
+                        if paddle_visivel:
+                            paddle.skin = "tempestade"
+                        if ja_tinha:
+                            codigo_secreto_msg = "Tempestade reequipada!"
+                            codigo_secreto_msg_until = now + 2000
+                            audio.tocar_som("powerup")
+                        else:
+                            codigo_secreto_msg = "Um raio cortou o ceu..."
+                            codigo_secreto_msg_until = now + 2200
+                            revelar_skin_lendaria = True
+                            if paddle_visivel:
+                                raio_secreto_ativo = True
+                                raio_secreto_inicio = now
+                                raio_secreto_trovao_tocado = False
+                                raio_secreto_x = paddle.retangulo().centerx
+                                audio.tocar_som("raio_caindo")
+                            else:
+                                audio.tocar_som("trovao")
                 if entering_name:
                     if event.key == pygame.K_RETURN:
                         entering_name = False
@@ -200,10 +274,10 @@ def principal():
                         elif event.key in (pygame.K_DOWN, pygame.K_s):
                             loja_categoria = categorias[(categorias.index(loja_categoria) + 1) % len(categorias)]
                             loja_idx = 0
-                        elif event.key in (pygame.K_LEFT, pygame.K_a) and loja_categoria != "pocoes":
+                        elif event.key in (pygame.K_LEFT, pygame.K_a) and loja_categoria in ("bolas", "raquetes"):
                             lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
                             loja_idx = (loja_idx - 1) % len(lista)
-                        elif event.key in (pygame.K_RIGHT, pygame.K_d) and loja_categoria != "pocoes":
+                        elif event.key in (pygame.K_RIGHT, pygame.K_d) and loja_categoria in ("bolas", "raquetes"):
                             lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
                             loja_idx = (loja_idx + 1) % len(lista)
                         elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
@@ -244,6 +318,37 @@ def principal():
                                 else:
                                     loja_msg = "Moedas insuficientes!"
                                 loja_msg_until = t + 1500
+                    elif menu_view == "inventario":
+                        categorias = ["bolas", "raquetes", "pocoes"]
+                        if event.key == pygame.K_ESCAPE:
+                            menu_view = "main"
+                        elif event.key in (pygame.K_UP, pygame.K_w):
+                            inv_categoria = categorias[(categorias.index(inv_categoria) - 1) % len(categorias)]
+                            inv_idx = 0
+                        elif event.key in (pygame.K_DOWN, pygame.K_s):
+                            inv_categoria = categorias[(categorias.index(inv_categoria) + 1) % len(categorias)]
+                            inv_idx = 0
+                        elif event.key in (pygame.K_LEFT, pygame.K_a) and inv_categoria != "pocoes":
+                            lista = ui.obter_itens_possuidos(inv_categoria)
+                            if lista:
+                                inv_idx = (inv_idx - 1) % len(lista)
+                        elif event.key in (pygame.K_RIGHT, pygame.K_d) and inv_categoria != "pocoes":
+                            lista = ui.obter_itens_possuidos(inv_categoria)
+                            if lista:
+                                inv_idx = (inv_idx + 1) % len(lista)
+                        elif event.key in (pygame.K_SPACE, pygame.K_RETURN) and inv_categoria != "pocoes":
+                            lista = ui.obter_itens_possuidos(inv_categoria)
+                            if lista:
+                                skin_id = lista[inv_idx % len(lista)]
+                                if inv_categoria == "bolas":
+                                    profile.equipar_skin_bola(skin_id)
+                                    info = skins.BALL_SKINS[skin_id]
+                                else:
+                                    profile.equipar_skin_raquete(skin_id)
+                                    info = skins.PADDLE_SKINS[skin_id]
+                                audio.tocar_som("powerup")
+                                inv_msg = f"{info['nome']} equipada!"
+                                inv_msg_until = pygame.time.get_ticks() + 1500
                     else:
                         if event.key in (pygame.K_UP, pygame.K_w):
                             menu_selected = (menu_selected - 1) % len(MENU_OPTIONS)
@@ -318,6 +423,13 @@ def principal():
         # enquanto pausado, 'now' fica congelado no valor de quando pausou -
         # assim nenhum cronometro (power-up, nivel, partida) avanca escondido
         now = frozen_now if paused else (pygame.time.get_ticks() - pause_accum_ms)
+
+        if raio_secreto_ativo:
+            if not raio_secreto_trovao_tocado and now - raio_secreto_inicio >= RAIO_SECRETO_QUEDA_MS:
+                audio.tocar_som("trovao")
+                raio_secreto_trovao_tocado = True
+            if now - raio_secreto_inicio >= RAIO_SECRETO_DURACAO_MS:
+                raio_secreto_ativo = False
 
         # acompanha a verificacao/envio do ranking apos o game over, sem travar o jogo
         if game_over and rank_check_phase == "checking" and leaderboard.obter_status_verificacao() in ("done", "error"):
@@ -494,6 +606,7 @@ def principal():
 
                 if bricks and all(not b.alive for b in bricks):
                     audio.tocar_som("victory")
+                    profile.adicionar_moedas(COINS_PER_LEVEL_CLEARED)
                     if level % BONUS_LEVEL_INTERVAL == 0:
                         bonus_active = True
                         bonus_until = now + BONUS_LEVEL_DURATION_MS
@@ -554,9 +667,12 @@ def principal():
                 ui.desenhar_ranking(draw_surf, now)
             elif menu_view == "loja":
                 ui.desenhar_loja(draw_surf, now, loja_categoria, loja_idx, loja_msg, loja_msg_until)
+            elif menu_view == "inventario":
+                ui.desenhar_inventario(draw_surf, now, inv_categoria, inv_idx, inv_msg, inv_msg_until)
             else:
                 loja_hover = ui.obter_retangulo_icone_loja().collidepoint(pygame.mouse.get_pos())
-                ui.desenhar_menu(draw_surf, now, menu_selected, loja_hover)
+                inv_hover = ui.obter_retangulo_icone_inventario().collidepoint(pygame.mouse.get_pos())
+                ui.desenhar_menu(draw_surf, now, menu_selected, loja_hover, inv_hover)
         else:
             ui.desenhar_fundo_estrelado(draw_surf, now)
             if bonus_active:
@@ -566,6 +682,8 @@ def principal():
                 for brick in bricks:
                     brick.desenhar(draw_surf)
             paddle.desenhar(draw_surf, now)
+            if raio_secreto_ativo:
+                ui.desenhar_raio_secreto(draw_surf, raio_secreto_x, paddle.y, now - raio_secreto_inicio)
             if now < paddle_cannons_until:
                 ui.desenhar_canhoes(draw_surf, paddle)
             for b in balls:
@@ -610,7 +728,9 @@ def principal():
                 ui.desenhar_nivel_completo(draw_surf, level, last_bonus_gain)
 
             if game_over and not entering_name:
-                ui.desenhar_mensagem_fim(draw_surf, "GAME OVER", (255, 80, 80), rank_check_phase)
+                ui.desenhar_mensagem_fim(draw_surf, "GAME OVER", (255, 80, 80), rank_check_phase,
+                                          skin_revelada="tempestade" if revelar_skin_lendaria else None,
+                                          now_ms=now)
 
             if paused:
                 ui.desenhar_menu_pausa(draw_surf, now, pause_selected, audio.sound_volume)
@@ -623,6 +743,9 @@ def principal():
 
         if offering_potion:
             ui.desenhar_oferta_pocao(draw_surf, profile.obter_pocoes())
+
+        if now < codigo_secreto_msg_until:
+            ui.desenhar_notificacao(draw_surf, codigo_secreto_msg)
 
         screen.blit(draw_surf, (offset_x, offset_y))
         pygame.display.flip()
