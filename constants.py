@@ -44,5 +44,12 @@ BONUS_LEVEL_INTERVAL = 5
 BONUS_LEVEL_DURATION_MS = 15000
 BONUS_COIN_VALUE = 25
 
+# ---- Moedas persistentes (loja) ----
+COINS_PER_LEVEL_CLEARED = 5  # bonus de moeda so por limpar a fase, alem das da rodada bonus
+
+# ---- Codigo secreto / skin ultra-rara "tempestade" ----
+RAIO_SECRETO_QUEDA_MS = 450    # tempo do raio caindo do topo da tela ate a raquete
+RAIO_SECRETO_DURACAO_MS = 650  # duracao total do efeito (queda + flash de impacto)
+
 MENU_OPTIONS = ["INICIAR JOGO", "RANKING", "CREDITOS", "SAIR"]
 PAUSE_OPTIONS = ["CONTINUAR", "VOLUME", "REINICIAR", "MENU INICIAL"]

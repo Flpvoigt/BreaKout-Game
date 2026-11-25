@@ -3,9 +3,28 @@ um segredo: qualquer um que clonar o repo acessa o mesmo placar compartilhado
 (ver README e as regras do banco). A identidade do jogador (id/nome) vive em
 profile.py - este modulo so cuida da comunicacao com o Firebase."""
 import json
+import ssl
+import sys
 import threading
 import urllib.request
 import urllib.error
+
+# No macOS, o Python do instalador oficial costuma nao vir com os
+# certificados SSL do sistema configurados - toda chamada HTTPS falha com
+# "CERTIFICATE_VERIFY_FAILED" (viramos "erro"/"sem internet?" aqui, sem isso).
+# certifi resolve isso de forma portavel; se nao estiver instalado, tenta
+# instalar sozinho (mesmo padrao usado pro numpy em audio.py).
+try:
+    import certifi
+except ImportError:
+    import subprocess
+    subprocess.run([sys.executable, "-m", "pip", "install", "certifi"], check=False)
+    try:
+        import certifi
+    except ImportError:
+        certifi = None
+
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where()) if certifi else None
 
 LEADERBOARD_BASE_URL = "https://breakoutgame-daf77-default-rtdb.firebaseio.com/leaderboard"
 LEADERBOARD_TOP_N = 10        # quantos nomes aparecem na tela de ranking
@@ -20,7 +39,8 @@ _rank_submit_cache = {"status": "idle"}  # status: idle/sending/ok/error
 
 def _buscar_todas_entradas():
     """Baixa o node 'leaderboard' inteiro: {player_id: {name, score}, ...}."""
-    with urllib.request.urlopen(f"{LEADERBOARD_BASE_URL}.json", timeout=LEADERBOARD_TIMEOUT) as resp:
+    with urllib.request.urlopen(f"{LEADERBOARD_BASE_URL}.json", timeout=LEADERBOARD_TIMEOUT,
+                                 context=_SSL_CONTEXT) as resp:
         raw = json.loads(resp.read().decode("utf-8") or "null")
     entries = {}
     if isinstance(raw, dict):
@@ -81,7 +101,7 @@ def _trabalhador_enviar_colocacao(player_id, name, score):
         body = json.dumps({"name": name, "score": score}).encode("utf-8")
         req = urllib.request.Request(url, data=body, method="PUT",
                                       headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=LEADERBOARD_TIMEOUT)
+        urllib.request.urlopen(req, timeout=LEADERBOARD_TIMEOUT, context=_SSL_CONTEXT)
         _rank_submit_cache["status"] = "ok"
     except Exception:
         _rank_submit_cache["status"] = "error"
