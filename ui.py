@@ -380,7 +380,7 @@ def desenhar_ranking(surf, now_ms):
         "ok": ("Nome atualizado!", (120, 230, 90)),
         "error": ("Falha ao atualizar (sem internet?)", (255, 120, 120)),
     }
-    sub_status = leaderboard.obter_status_envio()
+    sub_status = leaderboard.obter_status_renomeacao()
     if sub_status in rename_status_msgs:
         text_line, color_line = rename_status_msgs[sub_status]
         rendered = menu_font.render(text_line, True, color_line)
