@@ -8,7 +8,7 @@ import player_profile as profile
 import skins
 from fonts import powerup_font
 from constants import (
-    WIDTH, HEIGHT, BLACK, BRICK_COLORS,
+    WIDTH, HEIGHT, BLACK, BRICK_COLORS, BALL_MIN_VX,
     POWERUP_FALL_SPEED, POWERUP_COLORS, CANNON_PROJECTILE_SPEED, LEVEL_PATTERNS,
 )
 
@@ -86,6 +86,12 @@ class Ball:
         return pygame.Rect(self.x - self.radius, self.y - self.radius,
                             self.radius * 2, self.radius * 2)
 
+    def garantir_vx_minimo(self):
+        """Evita trajetoria quase vertical (ver BALL_MIN_VX em constants.py)."""
+        if abs(self.vx) < BALL_MIN_VX:
+            sinal = 1 if self.vx > 0 else (-1 if self.vx < 0 else random.choice([-1, 1]))
+            self.vx = sinal * BALL_MIN_VX
+
     def atualizar(self, speed_factor=1.0):
         if self.stuck:
             return
@@ -101,6 +107,7 @@ class Ball:
         if self.y - self.radius <= 0:
             self.vy *= -1
             audio.tocar_som("hit_wall")
+        self.garantir_vx_minimo()
 
     def desenhar(self, surf, now_ms=0):
         skins.desenhar_bola(surf, self.x, self.y, self.radius, self.skin, now_ms, self.trail)

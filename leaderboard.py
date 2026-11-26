@@ -114,6 +114,35 @@ def enviar_colocacao_async(player_id, name, score):
     threading.Thread(target=_trabalhador_enviar_colocacao, args=(player_id, name, score), daemon=True).start()
 
 
+_rename_cache = {"status": "idle"}  # status: idle/sending/ok/error
+
+
+def _trabalhador_renomear(player_id, name):
+    try:
+        url = f"{LEADERBOARD_BASE_URL}/{player_id}.json"
+        body = json.dumps({"name": name}).encode("utf-8")
+        req = urllib.request.Request(url, data=body, method="PATCH",
+                                      headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=LEADERBOARD_TIMEOUT, context=_SSL_CONTEXT)
+        _rename_cache["status"] = "ok"
+    except Exception:
+        _rename_cache["status"] = "error"
+
+
+def renomear_async(player_id, name):
+    """Atualiza so o campo 'name' no Firebase (PATCH, nao PUT) - nunca reenvia
+    a pontuacao guardada localmente. Resolve um jeito facil de forjar o
+    ranking: antes, renomear reenviava 'best_submitted_score' do
+    player_profile.json, que e um arquivo comum editavel em qualquer editor
+    de texto."""
+    _rename_cache["status"] = "sending"
+    threading.Thread(target=_trabalhador_renomear, args=(player_id, name), daemon=True).start()
+
+
+def obter_status_renomeacao():
+    return _rename_cache.get("status")
+
+
 # ---- Acesso de leitura/escrita pro resto do jogo (game.py / ui.py), sem
 # precisar mexer direto nos caches/perfil internos acima. ----
 

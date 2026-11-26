@@ -18,7 +18,7 @@ from constants import *
 
 pygame.display.set_icon(ui.criar_superficie_icone())
 
-screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.SCALED)
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("Breakout")
 clock = pygame.time.Clock()
 
@@ -32,10 +32,35 @@ CODIGO_SECRETO = [
 ]
 
 
+def _calcular_escala_tela():
+    """Fator de escala + offsets (letterbox) pra encaixar os 800x600 logicos
+    do jogo dentro do tamanho atual de 'screen' (janela redimensionada ou
+    tela cheia), mantendo a proporcao - nada do jogo roda fora desse espaco
+    logico, so o desenho final e o mouse passam por essa conversao.
+    Substitui o pygame.SCALED (a doc do proprio pygame marca como
+    'experimental'; na pratica nao escalava direito no fullscreen do Mac)."""
+    scr_w, scr_h = screen.get_size()
+    scale = min(scr_w / WIDTH, scr_h / HEIGHT)
+    off_x = (scr_w - WIDTH * scale) / 2
+    off_y = (scr_h - HEIGHT * scale) / 2
+    return scale, off_x, off_y
+
+
+def _mouse_pos_logico(pos=None):
+    """Converte uma posicao em pixels reais da janela/tela pra coordenada
+    logica 800x600 - usar em vez de event.pos/pygame.mouse.get_pos() cru em
+    qualquer collidepoint do jogo."""
+    scale, off_x, off_y = _calcular_escala_tela()
+    mx, my = pos if pos is not None else pygame.mouse.get_pos()
+    return ((mx - off_x) / scale, (my - off_y) / scale)
+
+
 def principal():
+    global screen
     state = "menu"  # "menu" ou "playing"
     menu_selected = 0
     menu_view = "main"  # "main", "credits", "ranking" ou "loja"
+    fullscreen = False
 
     loja_categoria = "bolas"
     loja_idx = 0
@@ -176,60 +201,64 @@ def principal():
                 sys.exit()
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if state == "menu" and menu_view == "main" and not entering_name:
-                    if ui.obter_retangulo_icone_loja().collidepoint(event.pos):
+                    if ui.obter_retangulo_icone_loja().collidepoint(_mouse_pos_logico(event.pos)):
                         menu_view = "loja"
                         loja_categoria = "bolas"
                         loja_idx = 0
                         loja_msg = ""
-                    elif ui.obter_retangulo_icone_inventario().collidepoint(event.pos):
+                    elif ui.obter_retangulo_icone_inventario().collidepoint(_mouse_pos_logico(event.pos)):
                         menu_view = "inventario"
                         inv_categoria = "bolas"
                         inv_idx = 0
                         inv_msg = ""
                     else:
                         for i, rect in ui.obter_retangulos_menu().items():
-                            if rect.collidepoint(event.pos):
+                            if rect.collidepoint(_mouse_pos_logico(event.pos)):
                                 menu_selected = i
                                 executar_opcao_menu(MENU_OPTIONS[i])
                 elif paused:
                     for i, rect in ui.obter_retangulos_menu_pausa().items():
-                        if rect.collidepoint(event.pos):
+                        if rect.collidepoint(_mouse_pos_logico(event.pos)):
                             pause_selected = i
                             executar_opcao_pausa(PAUSE_OPTIONS[i])
                 elif state == "menu" and menu_view == "loja":
-                    if ui.obter_retangulo_fechar_loja().collidepoint(event.pos):
+                    if ui.obter_retangulo_fechar_loja().collidepoint(_mouse_pos_logico(event.pos)):
                         menu_view = "main"
                     else:
                         for cat_id, rect in ui.obter_retangulos_abas_loja().items():
-                            if rect.collidepoint(event.pos):
+                            if rect.collidepoint(_mouse_pos_logico(event.pos)):
                                 loja_categoria = cat_id
                                 loja_idx = 0
                         if loja_categoria != "pocoes":
                             lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
                             left_arrow, right_arrow = ui.obter_retangulos_setas_loja()
-                            if left_arrow.collidepoint(event.pos):
+                            if left_arrow.collidepoint(_mouse_pos_logico(event.pos)):
                                 loja_idx = (loja_idx - 1) % len(lista)
-                            elif right_arrow.collidepoint(event.pos):
+                            elif right_arrow.collidepoint(_mouse_pos_logico(event.pos)):
                                 loja_idx = (loja_idx + 1) % len(lista)
                 elif state == "menu" and menu_view == "inventario":
-                    if ui.obter_retangulo_fechar_loja().collidepoint(event.pos):
+                    if ui.obter_retangulo_fechar_loja().collidepoint(_mouse_pos_logico(event.pos)):
                         menu_view = "main"
                     else:
                         for cat_id, rect in ui.obter_retangulos_abas_inventario().items():
-                            if rect.collidepoint(event.pos):
+                            if rect.collidepoint(_mouse_pos_logico(event.pos)):
                                 inv_categoria = cat_id
                                 inv_idx = 0
                         if inv_categoria != "pocoes":
                             lista = ui.obter_itens_possuidos(inv_categoria)
                             left_arrow, right_arrow = ui.obter_retangulos_setas_loja()
                             if lista:
-                                if left_arrow.collidepoint(event.pos):
+                                if left_arrow.collidepoint(_mouse_pos_logico(event.pos)):
                                     inv_idx = (inv_idx - 1) % len(lista)
-                                elif right_arrow.collidepoint(event.pos):
+                                elif right_arrow.collidepoint(_mouse_pos_logico(event.pos)):
                                     inv_idx = (inv_idx + 1) % len(lista)
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_F11:
-                    pygame.display.toggle_fullscreen()
+                    fullscreen = not fullscreen
+                    if fullscreen:
+                        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                    else:
+                        screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
                 if event.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):
                     codigo_secreto_buffer.append(event.key)
                     codigo_secreto_buffer[:] = codigo_secreto_buffer[-len(CODIGO_SECRETO):]
@@ -264,8 +293,7 @@ def principal():
                         if name_entry_context == "rename":
                             profile.definir_nome_jogador(name_final)
                             if profile.obter_melhor_pontuacao_enviada() > 0:
-                                leaderboard.enviar_colocacao_async(profile.obter_id_jogador(), name_final,
-                                                                    profile.obter_melhor_pontuacao_enviada())
+                                leaderboard.renomear_async(profile.obter_id_jogador(), name_final)
                         else:
                             profile.definir_nome_jogador(name_final)
                             rank_check_phase = "submitting"
@@ -688,7 +716,7 @@ def principal():
             elif menu_view == "inventario":
                 ui.desenhar_inventario(draw_surf, now, inv_categoria, inv_idx, inv_msg, inv_msg_until)
             else:
-                mouse_pos = pygame.mouse.get_pos()
+                mouse_pos = _mouse_pos_logico()
                 loja_hover = ui.obter_retangulo_icone_loja().collidepoint(mouse_pos)
                 inv_hover = ui.obter_retangulo_icone_inventario().collidepoint(mouse_pos)
                 for i, rect in ui.obter_retangulos_menu().items():
@@ -755,7 +783,7 @@ def principal():
                                           now_ms=now)
 
             if paused:
-                mouse_pos = pygame.mouse.get_pos()
+                mouse_pos = _mouse_pos_logico()
                 for i, rect in ui.obter_retangulos_menu_pausa().items():
                     if rect.collidepoint(mouse_pos):
                         pause_selected = i
@@ -773,6 +801,8 @@ def principal():
         if now < codigo_secreto_msg_until:
             ui.desenhar_notificacao(draw_surf, codigo_secreto_msg)
 
-        screen.blit(draw_surf, (offset_x, offset_y))
+        scale, off_x, off_y = _calcular_escala_tela()
+        scaled_surf = pygame.transform.smoothscale(draw_surf, (int(WIDTH * scale), int(HEIGHT * scale)))
+        screen.blit(scaled_surf, (int(off_x + offset_x * scale), int(off_y + offset_y * scale)))
         pygame.display.flip()
         clock.tick(FPS)

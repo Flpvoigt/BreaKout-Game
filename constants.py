@@ -18,6 +18,12 @@ BRICK_COLORS = [
     (80, 160, 255),
 ]
 
+# ---- Fisica da bola ----
+# Impede a trajetoria quase vertical (sobe reto, bate no teto, desce reto na
+# raquete, repete para sempre) - nada no jogo muda vx ao rebater em tijolo ou
+# teto, entao sem isso ela pode ficar presa em loop infinito.
+BALL_MIN_VX = 1.5
+
 # ---- Power-up tuning ----
 POWERUP_DROP_CHANCE = 0.15
 POWERUP_FALL_SPEED = 3

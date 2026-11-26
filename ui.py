@@ -7,7 +7,7 @@ import pygame
 import leaderboard
 import player_profile as profile
 import skins
-from fonts import font, big_font, status_font, title_font, menu_font, menu_hint_font
+from fonts import font, big_font, status_font, title_font, menu_font, menu_hint_font, tag_font
 from constants import (WIDTH, HEIGHT, WHITE, BLACK, POWERUP_COLORS, MENU_OPTIONS, PAUSE_OPTIONS,
                        RAIO_SECRETO_QUEDA_MS, RAIO_SECRETO_DURACAO_MS)
 
@@ -607,7 +607,11 @@ def obter_itens_possuidos(categoria):
 
 
 def _desenhar_card_pocao_inventario(surf, top_y, now_ms):
-    card_w, card_h = 340, 260
+    card_w = 340
+    nome_linhas = _quebrar_texto(skins.POTION_NOME, menu_font, card_w - 40)
+    desc_linhas = _quebrar_texto(skins.POTION_DESC, status_font, card_w - 40)
+    card_h = 168 + 26 * len(nome_linhas) + 20 * len(desc_linhas)
+
     rect = pygame.Rect(0, 0, card_w, card_h)
     rect.centerx = WIDTH // 2
     rect.top = top_y
@@ -620,13 +624,13 @@ def _desenhar_card_pocao_inventario(surf, top_y, now_ms):
     skins.desenhar_icone_pocao(surf, rect.centerx, rect.y + 68, now_ms, scale=2.0)
 
     y = rect.y + 122
-    for line in _quebrar_texto(skins.POTION_NOME, menu_font, rect.width - 40):
+    for line in nome_linhas:
         rendered = menu_font.render(line, True, (255, 230, 60))
         surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, y))
         y += 26
 
     y += 6
-    for line in _quebrar_texto(skins.POTION_DESC, status_font, rect.width - 40):
+    for line in desc_linhas:
         rendered = status_font.render(line, True, (210, 210, 220))
         surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, y))
         y += 20
@@ -699,6 +703,36 @@ def desenhar_inventario(surf, now_ms, categoria, idx, mensagem="", mensagem_unti
     surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 36))
 
 
+def _desenhar_tag_raridade(surf, card_rect, skin_id):
+    """Ribbon no topo do card indicando raridade: dourado 'LENDARIO' pras
+    skins lendarias, vermelho/preto 'TOP SECRET' pra tempestade (a unica
+    liberada pelo codigo secreto)."""
+    if skin_id in skins.RARIDADE_SECRETA:
+        texto, text_color = "TOP SECRET", (255, 255, 255)
+    elif skin_id in skins.RARIDADE_LENDARIA:
+        texto, text_color = "LENDARIO", BLACK
+    else:
+        return
+
+    label = tag_font.render(texto, True, text_color)
+    tag_rect = pygame.Rect(0, 0, label.get_width() + 14, label.get_height() + 6)
+    tag_rect.centerx = card_rect.centerx
+    tag_rect.top = card_rect.top - tag_rect.height // 2
+
+    tag_bg = pygame.Surface(tag_rect.size, pygame.SRCALPHA)
+    if skin_id in skins.RARIDADE_SECRETA:
+        for x in range(tag_rect.width):
+            t = x / max(1, tag_rect.width - 1)
+            mix = abs(t - 0.5) * 2
+            r = int(70 + 130 * (1 - mix))
+            pygame.draw.line(tag_bg, (r, 0, 0), (x, 0), (x, tag_rect.height))
+    else:
+        tag_bg.fill((255, 200, 40))
+    surf.blit(tag_bg, tag_rect.topleft)
+    pygame.draw.rect(surf, BLACK, tag_rect, width=2, border_radius=5)
+    surf.blit(label, (tag_rect.centerx - label.get_width() // 2, tag_rect.centery - label.get_height() // 2))
+
+
 def _desenhar_cards_loja(surf, top_y, now_ms, categoria, ordem, catalogo, idx, owned_fn, equipped_fn):
     n = len(ordem)
     gap = 20
@@ -721,6 +755,7 @@ def _desenhar_cards_loja(surf, top_y, now_ms, categoria, ordem, catalogo, idx, o
         surf.blit(card_bg, rect.topleft)
         border_color = (255, 215, 0) if is_sel else ((120, 230, 90) if is_equipped else (100, 95, 120))
         pygame.draw.rect(surf, border_color, rect, width=3 if is_sel else 2, border_radius=12)
+        _desenhar_tag_raridade(surf, rect, skin_id)
 
         preview_cy = rect.y + 56
         if categoria == "bolas":
