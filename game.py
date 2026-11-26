@@ -40,6 +40,7 @@ def _calcular_escala_tela():
     Substitui o pygame.SCALED (a doc do proprio pygame marca como
     'experimental'; na pratica nao escalava direito no fullscreen do Mac)."""
     scr_w, scr_h = screen.get_size()
+    scr_w, scr_h = max(1, scr_w), max(1, scr_h)  # janela minimizada pode reportar 0
     scale = min(scr_w / WIDTH, scr_h / HEIGHT)
     off_x = (scr_w - WIDTH * scale) / 2
     off_y = (scr_h - HEIGHT * scale) / 2
@@ -802,7 +803,12 @@ def principal():
             ui.desenhar_notificacao(draw_surf, codigo_secreto_msg)
 
         scale, off_x, off_y = _calcular_escala_tela()
-        scaled_surf = pygame.transform.smoothscale(draw_surf, (int(WIDTH * scale), int(HEIGHT * scale)))
-        screen.blit(scaled_surf, (int(off_x + offset_x * scale), int(off_y + offset_y * scale)))
+        if scale == 1.0:
+            # caso comum (janela no tamanho padrao, sem fullscreen/resize):
+            # blit direto, sem gastar ciclo de smoothscale a toa todo frame
+            screen.blit(draw_surf, (int(off_x + offset_x), int(off_y + offset_y)))
+        else:
+            scaled_surf = pygame.transform.smoothscale(draw_surf, (int(WIDTH * scale), int(HEIGHT * scale)))
+            screen.blit(scaled_surf, (int(off_x + offset_x * scale), int(off_y + offset_y * scale)))
         pygame.display.flip()
         clock.tick(FPS)
