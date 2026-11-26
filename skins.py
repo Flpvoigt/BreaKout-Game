@@ -12,8 +12,8 @@ BALL_SKINS = {
     "volei":     {"nome": "Volei",    "preco": 140, "desc": "Gomos azuis, rastro claro."},
     "espinhos":  {"nome": "Espinhos", "preco": 160, "desc": "Puas afiadas, rastro em brasa."},
     "bomba":     {"nome": "Bomba",    "preco": 180, "desc": "Pavio aceso, rastro de fagulhas."},
-    "cometa":    {"nome": "Cometa",   "preco": 450, "desc": "LENDARIA: cores que nunca param de mudar."},
-    "fenix":     {"nome": "Fenix",    "preco": 520, "desc": "LENDARIA: labaredas eternas, renasce a cada rebatida."},
+    "cometa":    {"nome": "Cometa",   "preco": 450, "desc": "Cores que nunca param de mudar."},
+    "fenix":     {"nome": "Fenix",    "preco": 520, "desc": "Labaredas eternas, renasce a cada rebatida."},
 }
 BALL_SKIN_ORDER = ["padrao", "volei", "espinhos", "bomba", "cometa", "fenix"]
 
@@ -22,14 +22,18 @@ PADDLE_SKINS = {
     "listrada":   {"nome": "Corrida",    "preco": 120, "desc": "Listras vermelhas sobre branco."},
     "eletrica":   {"nome": "Eletrica",   "preco": 150, "desc": "Raio aceso com faiscas."},
     "dourada":    {"nome": "Dourada",    "preco": 220, "desc": "Brilho dourado reluzente."},
-    "prisma":     {"nome": "Prisma",     "preco": 500, "desc": "LENDARIA: gradiente arco-iris animado."},
-    "nebulosa":   {"nome": "Nebulosa",   "preco": 560, "desc": "LENDARIA: nuvem cosmica com estrelas cintilantes."},
-    "tempestade": {"nome": "Tempestade", "preco": 0,   "desc": "ULTRA-RARA: so cai do ceu com um codigo secreto."},
+    "prisma":     {"nome": "Prisma",     "preco": 500, "desc": "Gradiente arco-iris animado."},
+    "nebulosa":   {"nome": "Nebulosa",   "preco": 560, "desc": "Nuvem cosmica com estrelas cintilantes."},
+    "tempestade": {"nome": "Tempestade", "preco": 0,   "desc": "So cai do ceu com um codigo secreto."},
 }
 # "tempestade" fica de fora de proposito: nao aparece na loja, nao se compra.
 # So existe uma forma de consegui-la - o codigo secreto (CODIGO_SECRETO, em
 # game.py) faz um raio cair do ceu e atingir a raquete, transformando-a nela.
 PADDLE_SKIN_ORDER = ["padrao", "listrada", "eletrica", "dourada", "prisma", "nebulosa"]
+
+# Raridades usadas pra desenhar a tag no card da loja/mochila (ui.py).
+RARIDADE_LENDARIA = {"cometa", "fenix", "prisma", "nebulosa"}
+RARIDADE_SECRETA = {"tempestade"}
 
 POTION_PRECO = 400
 POTION_NOME = "Pocao da Segunda Chance"
