@@ -300,6 +300,19 @@ def _padrao_presente(pattern, row, col, rows, cols):
         if row % 2 == 0:
             return col != 0 and col != cols - 1
         return True
+    if pattern == 5:  # xadrez: tijolo sim, tijolo nao, alternando em tabuleiro
+        return (row + col) % 2 == 0
+    if pattern == 6:  # "X": duas faixas diagonais cruzando o grid
+        t = col / max(1, cols - 1)
+        diag1 = t * (rows - 1)
+        diag2 = (1 - t) * (rows - 1)
+        return abs(row - diag1) <= 1.5 or abs(row - diag2) <= 1.5
+    if pattern == 7:  # listras horizontais: uma fileira inteira vazia a cada 3
+        return row % 3 != 2
+    if pattern == 8:  # anel: so a moldura do grid tem tijolo, o meio fica vazio
+        return row in (0, rows - 1) or col in (0, cols - 1)
+    if pattern == 9:  # zigue-zague: faixa diagonal grossa descendo pro lado
+        return (row + col) % 4 < 2
     return True
 
 

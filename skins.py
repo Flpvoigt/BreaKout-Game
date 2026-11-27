@@ -1,5 +1,5 @@
-"""Catalogo de itens compraveis na loja (bolas, raquetes, pocao) e o desenho
-de cada skin. Usado tanto pelos objetos de jogo (entities.py) quanto pelo
+"""Catalogo de itens compraveis na loja (bolas, raquetes) e o desenho de
+cada skin. Usado tanto pelos objetos de jogo (entities.py) quanto pelo
 preview ao vivo na tela da loja (ui.py)."""
 import colorsys
 import math
@@ -34,10 +34,6 @@ PADDLE_SKIN_ORDER = ["padrao", "listrada", "eletrica", "dourada", "prisma", "neb
 # Raridades usadas pra desenhar a tag no card da loja/mochila (ui.py).
 RARIDADE_LENDARIA = {"cometa", "fenix", "prisma", "nebulosa"}
 RARIDADE_SECRETA = {"tempestade"}
-
-POTION_PRECO = 400
-POTION_NOME = "Pocao da Segunda Chance"
-POTION_DESC = "Perdeu a ultima vida? Pergunta se quer continuar com 1 vida. Uso unico por pocao."
 
 _TRAIL_COLORS = {
     "padrao": BALL_COLOR,
@@ -399,34 +395,3 @@ def desenhar_raquete(surf, rect, skin_id, now_ms):
         _desenhar_raquete_tempestade(surf, rect, now_ms)
     else:
         _desenhar_raquete_padrao(surf, rect)
-
-
-# ---- pocao ----
-
-def desenhar_icone_pocao(surf, cx, cy, now_ms, scale=1.0):
-    """Frasco de pocao com liquido borbulhante (muda de tom com o tempo)."""
-    neck_w, neck_h = int(9 * scale), int(11 * scale)
-    neck_rect = pygame.Rect(0, 0, neck_w, neck_h)
-    neck_rect.midbottom = (cx, cy - int(15 * scale))
-    pygame.draw.rect(surf, (90, 70, 60), neck_rect, border_radius=2)
-
-    cork_rect = pygame.Rect(0, 0, neck_w + 6, int(6 * scale))
-    cork_rect.midbottom = (cx, neck_rect.top + int(3 * scale))
-    pygame.draw.rect(surf, (150, 110, 70), cork_rect, border_radius=2)
-
-    body_w, body_h = int(28 * scale), int(30 * scale)
-    body_rect = pygame.Rect(0, 0, body_w, body_h)
-    body_rect.midtop = (cx, neck_rect.bottom - int(2 * scale))
-
-    inner = body_rect.inflate(-int(6 * scale), -int(6 * scale))
-    bub = (math.sin(now_ms / 220.0) + 1) / 2
-    liquid_color = (int(210 + 20 * bub), int(50 + 30 * bub), int(150 + 30 * bub))
-    pygame.draw.ellipse(surf, liquid_color, inner)
-
-    shine_rect = pygame.Rect(0, 0, max(2, int(body_w * 0.22)), max(2, int(body_h * 0.35)))
-    shine_rect.topleft = (inner.x + int(3 * scale), inner.y + int(3 * scale))
-    shine = pygame.Surface(shine_rect.size, pygame.SRCALPHA)
-    shine.fill((255, 255, 255, 100))
-    surf.blit(shine, shine_rect.topleft)
-
-    pygame.draw.ellipse(surf, (20, 20, 30), body_rect, width=max(1, int(2 * scale)))

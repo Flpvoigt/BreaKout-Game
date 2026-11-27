@@ -1,12 +1,20 @@
 """Perfil local do jogador: identidade usada no ranking (id/nome/recorde
-enviado) e progresso persistente da loja (moedas, skins compradas/equipadas,
-pocoes). Guardado em player_profile.json, no mesmo diretorio do jogo, fora
-do git."""
+enviado) e progresso persistente da loja (moedas, skins compradas/equipadas).
+Guardado em player_profile.json, no mesmo diretorio do jogo, fora do git."""
 import json
 import os
 import uuid
 
 PROFILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "player_profile.json")
+
+DEFAULT_STATS = {
+    "tijolos_destruidos": 0,
+    "maior_nivel": 1,
+    "moedas_total_ganhas": 0,
+    "vidas_extras_coletadas": 0,
+    "fantasmas_coletados": 0,
+    "partidas_jogadas": 0,
+}
 
 DEFAULT_PROFILE = {
     "player_id": None,
@@ -17,7 +25,9 @@ DEFAULT_PROFILE = {
     "owned_paddle_skins": ["padrao"],
     "equipped_ball_skin": "padrao",
     "equipped_paddle_skin": "padrao",
-    "potions": 0,
+    "stats": dict(DEFAULT_STATS),
+    "niveis_conquista_notificados": {},
+    "conquistas_especiais": [],
 }
 
 
@@ -148,21 +158,49 @@ def equipar_skin_raquete(skin_id):
     salvar()
 
 
-# ---- pocoes ----
+# ---- estatisticas (base das conquistas, ver conquistas.py) ----
 
-def obter_pocoes():
-    return _profile.get("potions", 0)
+def obter_estatisticas():
+    stats = _profile.setdefault("stats", dict(DEFAULT_STATS))
+    for key, value in DEFAULT_STATS.items():
+        stats.setdefault(key, value)
+    return dict(stats)
 
 
-def adicionar_pocao():
-    _profile["potions"] = obter_pocoes() + 1
+def incrementar_estatistica(nome, quantidade=1):
+    stats = _profile.setdefault("stats", dict(DEFAULT_STATS))
+    stats[nome] = stats.get(nome, 0) + quantidade
     salvar()
 
 
-def usar_pocao():
-    """Consome 1 pocao se houver. Retorna True se consumiu."""
-    if obter_pocoes() <= 0:
-        return False
-    _profile["potions"] = obter_pocoes() - 1
+def definir_estatistica_maxima(nome, valor):
+    """Atualiza 'nome' pra 'valor', so se for maior que o que ja estava salvo
+    (usado em estatisticas de 'recorde', tipo a maior fase alcancada)."""
+    stats = _profile.setdefault("stats", dict(DEFAULT_STATS))
+    if valor > stats.get(nome, 0):
+        stats[nome] = valor
+        salvar()
+
+
+# ---- conquistas ----
+
+def obter_niveis_notificados():
+    return dict(_profile.get("niveis_conquista_notificados", {}))
+
+
+def definir_nivel_notificado(trilha_id, nivel):
+    niveis = _profile.setdefault("niveis_conquista_notificados", {})
+    niveis[trilha_id] = nivel
     salvar()
-    return True
+
+
+def obter_conquistas_especiais():
+    return list(_profile.get("conquistas_especiais", []))
+
+
+def desbloquear_conquista_especial(conquista_id):
+    lista = obter_conquistas_especiais()
+    if conquista_id not in lista:
+        lista.append(conquista_id)
+        _profile["conquistas_especiais"] = lista
+        salvar()

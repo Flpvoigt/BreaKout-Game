@@ -4,6 +4,7 @@ import math
 import random
 import pygame
 
+import conquistas
 import leaderboard
 import player_profile as profile
 import skins
@@ -16,8 +17,8 @@ __all__ = [
     "desenhar_fundo_retro", "desenhar_fundo_estrelado",
     "desenhar_menu", "desenhar_creditos", "desenhar_ranking",
     "desenhar_cronometro_powerup", "desenhar_entrada_nome", "desenhar_mensagem_fim",
-    "desenhar_nivel_completo", "desenhar_menu_pausa", "desenhar_loja", "desenhar_oferta_pocao",
-    "desenhar_notificacao", "desenhar_raio_secreto", "desenhar_inventario",
+    "desenhar_nivel_completo", "desenhar_menu_pausa", "desenhar_loja",
+    "desenhar_notificacao", "desenhar_combo_flash", "desenhar_raio_secreto", "desenhar_inventario",
     "desenhar_icone_inventario", "obter_retangulo_icone_inventario",
     "obter_retangulos_abas_inventario", "obter_itens_possuidos",
     "obter_retangulos_menu", "obter_retangulos_menu_pausa",
@@ -312,21 +313,23 @@ def desenhar_creditos(surf, now_ms):
         "Controles: SETAS ou A / D para mover a raquete",
         "ESPACO lanca a bola e confirma opcoes do menu",
         "",
-        "W = raquete larga   M = multi-bola   S = bola lenta   C = canhoes",
+        "W = raquete larga   M = multi-bola   S = bola lenta",
+        "C = canhoes   G = ima   F = fantasma",
+        "L = vida extra   P = raquete pequena (ruim!)",
         "Colete moedas na rodada bonus e gaste na LOJA do menu principal",
         "F11 alterna tela cheia",
         "",
         "Trabalho AV2 - Linguagens - Uniasselvi",
     ]
-    y = 160
+    y = 136
     for line in lines:
         if line:
             rendered = menu_font.render(line, True, WHITE)
             surf.blit(rendered, (WIDTH // 2 - rendered.get_width() // 2, y))
-        y += 30
+        y += 26
 
     hint = menu_font.render("Pressione ESPACO ou ESC para voltar", True, (120, 230, 90))
-    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, y + 16))
+    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, y + 14))
 
 
 RANK_TAGS = {
@@ -455,8 +458,8 @@ def desenhar_fundo_loja(surf, now_ms):
     surf.blit(_loja_bg_cache, (0, 0))
 
 
-LOJA_CATEGORIAS = [("bolas", "BOLAS"), ("raquetes", "RAQUETES"), ("pocoes", "POCOES")]
-INVENTARIO_CATEGORIAS = [("bolas", "BOLAS"), ("raquetes", "RAQUETES"), ("pocoes", "POCAO")]
+LOJA_CATEGORIAS = [("bolas", "BOLAS"), ("raquetes", "RAQUETES")]
+INVENTARIO_CATEGORIAS = [("bolas", "BOLAS"), ("raquetes", "RAQUETES"), ("conquistas", "CONQUISTAS")]
 LOJA_CONTENT_TOP = 150
 
 
@@ -606,44 +609,108 @@ def obter_itens_possuidos(categoria):
     return itens
 
 
-def _desenhar_card_pocao_inventario(surf, top_y, now_ms):
-    card_w = 340
-    nome_linhas = _quebrar_texto(skins.POTION_NOME, menu_font, card_w - 40)
-    desc_linhas = _quebrar_texto(skins.POTION_DESC, status_font, card_w - 40)
-    card_h = 168 + 26 * len(nome_linhas) + 20 * len(desc_linhas)
+NIVEL_CORES_CONQUISTA = {
+    1: (176, 110, 60),    # bronze
+    2: (195, 195, 205),   # prata
+    3: (255, 205, 60),    # ouro
+    4: (150, 215, 230),   # platina
+    5: (190, 140, 255),   # diamante
+}
 
-    rect = pygame.Rect(0, 0, card_w, card_h)
-    rect.centerx = WIDTH // 2
-    rect.top = top_y
 
-    card_bg = pygame.Surface(rect.size, pygame.SRCALPHA)
-    card_bg.fill((45, 30, 55, 230))
-    surf.blit(card_bg, rect.topleft)
-    pygame.draw.rect(surf, (255, 100, 200), rect, width=3, border_radius=14)
+def _desenhar_insignia_conquista(surf, cx, cy, nivel, now_ms, raio=20, cor_base=None):
+    """Insignia de uma conquista - fica mais ornamentada conforme o nivel (1
+    Bronze simples ate 5 Diamante, com brilho pulsante e estrela). nivel<=0
+    desenha um cadeado (conquista ainda bloqueada)."""
+    if nivel <= 0:
+        pygame.draw.circle(surf, (55, 55, 62), (cx, cy), raio)
+        pygame.draw.circle(surf, (90, 90, 100), (cx, cy), raio, width=2)
+        corpo = pygame.Rect(0, 0, int(raio * 0.9), int(raio * 0.7))
+        corpo.center = (cx, cy + int(raio * 0.15))
+        pygame.draw.rect(surf, (130, 130, 140), corpo, border_radius=3)
+        arco_rect = pygame.Rect(0, 0, int(raio * 0.7), int(raio * 0.7))
+        arco_rect.center = (cx, cy - int(raio * 0.1))
+        pygame.draw.arc(surf, (130, 130, 140), arco_rect, 0.3, 2.85, width=3)
+        return
 
-    skins.desenhar_icone_pocao(surf, rect.centerx, rect.y + 68, now_ms, scale=2.0)
+    cor = cor_base or NIVEL_CORES_CONQUISTA.get(nivel, (150, 150, 150))
+    if nivel >= 5:
+        pulse = (math.sin(now_ms / 300.0) + 1) / 2
+        glow_r = int(raio * (1.5 + 0.3 * pulse))
+        glow = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*cor, int(70 + 50 * pulse)), (glow_r, glow_r), glow_r)
+        surf.blit(glow, (cx - glow_r, cy - glow_r))
 
-    y = rect.y + 122
-    for line in nome_linhas:
-        rendered = menu_font.render(line, True, (255, 230, 60))
-        surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, y))
-        y += 26
+    pygame.draw.circle(surf, cor, (cx, cy), raio)
+    pygame.draw.circle(surf, BLACK, (cx, cy), raio, width=2)
+    if nivel >= 2:
+        anel = tuple(min(255, int(c * 1.25)) for c in cor)
+        pygame.draw.circle(surf, anel, (cx, cy), raio - 4, width=2)
+    if nivel >= 4:
+        pygame.draw.circle(surf, BLACK, (cx, cy), raio - 7, width=1)
+    if nivel >= 3:
+        pts = []
+        for i in range(10):
+            ang = -math.pi / 2 + i * math.pi / 5
+            r = (raio * 0.55) if i % 2 == 0 else (raio * 0.22)
+            pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+        pygame.draw.polygon(surf, (255, 255, 255), pts)
+        pygame.draw.polygon(surf, BLACK, pts, width=1)
 
-    y += 6
-    for line in desc_linhas:
-        rendered = status_font.render(line, True, (210, 210, 220))
-        surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, y))
-        y += 20
 
-    qtd_text = status_font.render(f"Voce tem: {profile.obter_pocoes()}", True, (255, 215, 0))
-    surf.blit(qtd_text, (rect.centerx - qtd_text.get_width() // 2, y + 10))
+def _desenhar_conquistas(surf, now_ms):
+    stats = profile.obter_estatisticas()
+    especiais_desbloqueadas = set(profile.obter_conquistas_especiais())
+
+    top = LOJA_CONTENT_TOP - 10
+    row_h = 44
+    raio = 17
+    pad_x = 60
+
+    for i, trilha in enumerate(conquistas.TRILHAS):
+        nivel = conquistas.nivel_da_trilha(trilha, stats)
+        valor, proximo = conquistas.progresso_da_trilha(trilha, stats)
+        y = top + i * row_h
+        cy = y + row_h // 2 - 2
+        _desenhar_insignia_conquista(surf, pad_x + 17, cy, nivel, now_ms, raio=raio)
+
+        nome_color = WHITE if nivel > 0 else (140, 140, 150)
+        if nivel >= 5:
+            nivel_txt = "MAXIMO (Diamante)"
+        elif nivel > 0:
+            nivel_txt = f"Nivel {nivel}/5 ({conquistas.NIVEL_NOMES[nivel]})"
+        else:
+            nivel_txt = "Bloqueada"
+        nome_rendered = status_font.render(f"{trilha['nome']} - {nivel_txt}", True, nome_color)
+        surf.blit(nome_rendered, (pad_x + 50, y + 4))
+
+        if proximo is not None:
+            prog_txt = f"{valor:,} / {proximo:,}".replace(",", ".")
+        else:
+            prog_txt = f"{valor:,}".replace(",", ".")
+        prog_rendered = tag_font.render(prog_txt, True, (190, 190, 200))
+        surf.blit(prog_rendered, (pad_x + 50, y + 24))
+
+    esp_top = top + len(conquistas.TRILHAS) * row_h + 6
+    for j, especial in enumerate(conquistas.ESPECIAIS):
+        y = esp_top + j * row_h
+        cy = y + row_h // 2 - 2
+        desbloqueada = especial["id"] in especiais_desbloqueadas
+        _desenhar_insignia_conquista(surf, pad_x + 17, cy, 5 if desbloqueada else 0, now_ms, raio=raio,
+                                      cor_base=(200, 120, 255) if desbloqueada else None)
+        nome_color = WHITE if desbloqueada else (140, 140, 150)
+        status_txt = "DESBLOQUEADA" if desbloqueada else "Bloqueada"
+        nome_rendered = status_font.render(f"{especial['nome']} - {status_txt}", True, nome_color)
+        surf.blit(nome_rendered, (pad_x + 50, y + 4))
+        desc_rendered = tag_font.render(especial["desc"], True, (190, 190, 200))
+        surf.blit(desc_rendered, (pad_x + 50, y + 24))
 
 
 def desenhar_inventario(surf, now_ms, categoria, idx, mensagem="", mensagem_until=0):
-    """Tela propria (fora da loja) com tudo que o jogador ja possui - bolas,
-    raquetes (incluindo a ultra-rara 'tempestade', se conquistada) e poções.
-    Selecionar um item e apertar ESPACO equipa ele; selecionar 'Padrao' e
-    equipar e a forma de 'desequipar' e voltar ao visual padrao."""
+    """Tela propria (fora da loja) com tudo que o jogador ja possui - bolas e
+    raquetes (incluindo a ultra-rara 'tempestade', se conquistada). Selecionar
+    um item e apertar ESPACO equipa ele; selecionar 'Padrao' e equipar e a
+    forma de 'desequipar' e voltar ao visual padrao."""
     desenhar_fundo_loja(surf, now_ms)
 
     title = big_font.render("MOCHILA", True, (255, 215, 0))
@@ -672,8 +739,8 @@ def desenhar_inventario(surf, now_ms, categoria, idx, mensagem="", mensagem_unti
         surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, rect.centery - rendered.get_height() // 2))
 
     content_top = LOJA_CONTENT_TOP
-    if categoria == "pocoes":
-        _desenhar_card_pocao_inventario(surf, content_top, now_ms)
+    if categoria == "conquistas":
+        _desenhar_conquistas(surf, now_ms)
     else:
         ordem = obter_itens_possuidos(categoria)
         if not ordem:
@@ -695,7 +762,7 @@ def desenhar_inventario(surf, now_ms, categoria, idx, mensagem="", mensagem_unti
         msg_rendered = menu_font.render(mensagem, True, (255, 230, 60))
         surf.blit(msg_rendered, (WIDTH // 2 - msg_rendered.get_width() // 2, HEIGHT - 86))
 
-    if categoria == "pocoes":
+    if categoria == "conquistas":
         hint_txt = "ESC/X: volta"
     else:
         hint_txt = "SETAS/MOUSE: navega   ESPACO: equipa   ESC/X: volta"
@@ -787,36 +854,6 @@ def _desenhar_cards_loja(surf, top_y, now_ms, categoria, ordem, catalogo, idx, o
             surf.blit(arrow, (rect.centerx - arrow.get_width() // 2, rect.bottom + 2))
 
 
-def _desenhar_card_pocao(surf, top_y, now_ms):
-    card_w, card_h = 340, 320
-    rect = pygame.Rect(0, 0, card_w, card_h)
-    rect.centerx = WIDTH // 2
-    rect.top = top_y
-
-    card_bg = pygame.Surface(rect.size, pygame.SRCALPHA)
-    card_bg.fill((45, 30, 55, 230))
-    surf.blit(card_bg, rect.topleft)
-    pygame.draw.rect(surf, (255, 100, 200), rect, width=3, border_radius=14)
-
-    skins.desenhar_icone_pocao(surf, rect.centerx, rect.y + 68, now_ms, scale=2.0)
-
-    y = rect.y + 122
-    for line in _quebrar_texto(skins.POTION_NOME, menu_font, rect.width - 40):
-        rendered = menu_font.render(line, True, (255, 230, 60))
-        surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, y))
-        y += 26
-
-    y += 10
-    for line in _quebrar_texto(skins.POTION_DESC, menu_font, rect.width - 40):
-        rendered = menu_font.render(line, True, WHITE)
-        surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, y))
-        y += 24
-
-    preco_text = status_font.render(f"{skins.POTION_PRECO} moedas - voce tem {profile.obter_pocoes()}",
-                                     True, (255, 215, 0))
-    surf.blit(preco_text, (rect.centerx - preco_text.get_width() // 2, y + 10))
-
-
 def desenhar_loja(surf, now_ms, categoria, idx, mensagem="", mensagem_until=0):
     desenhar_fundo_loja(surf, now_ms)
 
@@ -853,20 +890,17 @@ def desenhar_loja(surf, now_ms, categoria, idx, mensagem="", mensagem_until=0):
         surf.blit(rendered, (rect.centerx - rendered.get_width() // 2, rect.centery - rendered.get_height() // 2))
 
     content_top = LOJA_CONTENT_TOP
-    if categoria == "pocoes":
-        _desenhar_card_pocao(surf, content_top, now_ms)
+    if categoria == "bolas":
+        ordem, catalogo = skins.BALL_SKIN_ORDER, skins.BALL_SKINS
+        owned_fn, equipped_fn = profile.possui_skin_bola, profile.obter_skin_bola_equipada
     else:
-        if categoria == "bolas":
-            ordem, catalogo = skins.BALL_SKIN_ORDER, skins.BALL_SKINS
-            owned_fn, equipped_fn = profile.possui_skin_bola, profile.obter_skin_bola_equipada
-        else:
-            ordem, catalogo = skins.PADDLE_SKIN_ORDER, skins.PADDLE_SKINS
-            owned_fn, equipped_fn = profile.possui_skin_raquete, profile.obter_skin_raquete_equipada
-        _desenhar_cards_loja(surf, content_top, now_ms, categoria, ordem, catalogo, idx, owned_fn, equipped_fn)
+        ordem, catalogo = skins.PADDLE_SKIN_ORDER, skins.PADDLE_SKINS
+        owned_fn, equipped_fn = profile.possui_skin_raquete, profile.obter_skin_raquete_equipada
+    _desenhar_cards_loja(surf, content_top, now_ms, categoria, ordem, catalogo, idx, owned_fn, equipped_fn)
 
-        left_arrow, right_arrow = obter_retangulos_setas_loja()
-        _desenhar_botao_seta(surf, left_arrow, "left")
-        _desenhar_botao_seta(surf, right_arrow, "right")
+    left_arrow, right_arrow = obter_retangulos_setas_loja()
+    _desenhar_botao_seta(surf, left_arrow, "left")
+    _desenhar_botao_seta(surf, right_arrow, "right")
 
     if mensagem and now_ms < mensagem_until:
         msg_rendered = menu_font.render(mensagem, True, (255, 230, 60))
@@ -876,25 +910,27 @@ def desenhar_loja(surf, now_ms, categoria, idx, mensagem="", mensagem_until=0):
     surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 36))
 
 
-def desenhar_oferta_pocao(surf, potions_left):
-    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 190))
-    surf.blit(overlay, (0, 0))
+def desenhar_combo_flash(surf, texto, cor, now_ms, until_ms):
+    """Mensagem de hype centralizada (COMBO!/OTIMO!/INCRIVEL!/IMPARAVEL!),
+    some com um fade rapido no final - usada quando o multiplicador de combo
+    sobe de nivel (ver registrar_combo em game.py)."""
+    restante = until_ms - now_ms
+    if restante <= 0:
+        return
+    fade_janela = 300
+    alpha = 255 if restante > fade_janela else int(255 * restante / fade_janela)
+    rendered = big_font.render(texto, True, cor)
+    s = pygame.Surface(rendered.get_size(), pygame.SRCALPHA)
+    s.blit(rendered, (0, 0))
+    s.set_alpha(alpha)
+    surf.blit(s, (WIDTH // 2 - rendered.get_width() // 2, 110))
 
-    title = big_font.render("ULTIMA VIDA PERDIDA!", True, (255, 80, 80))
-    surf.blit(title, (WIDTH // 2 - title.get_width() // 2, HEIGHT // 2 - 110))
 
-    prompt = font.render(f"Usar {skins.POTION_NOME}? (restam {potions_left})", True, WHITE)
-    surf.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, HEIGHT // 2 - 40))
-
-    hint = menu_hint_font.render("S: Sim, continuar com 1 vida   -   N: Nao", True, (170, 170, 185))
-    surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT // 2 + 20))
-
-
-def desenhar_notificacao(surf, texto):
-    """Banner curto no topo da tela, usado p.ex. pro aviso de codigo secreto.
-    Funciona por cima de qualquer tela (menu ou jogo). Quebra em varias linhas
-    se o texto nao couber na largura da tela."""
+def desenhar_notificacao(surf, texto, top=90, cor_borda=(190, 100, 255)):
+    """Banner curto no topo da tela, usado p.ex. pro aviso de codigo secreto e
+    de conquista desbloqueada (com um 'top' diferente, pra nao sobrepor caso
+    as duas apareçam ao mesmo tempo). Funciona por cima de qualquer tela (menu
+    ou jogo). Quebra em varias linhas se o texto nao couber na largura da tela."""
     max_w = WIDTH - 60
     palavras = texto.split(" ")
     linhas = []
@@ -914,11 +950,11 @@ def desenhar_notificacao(surf, texto):
     altura_linha = rendereds[0].get_height()
     box = pygame.Rect(0, 0, largura + 40, altura_linha * len(rendereds) + 20)
     box.centerx = WIDTH // 2
-    box.top = 90
+    box.top = top
     bg = pygame.Surface(box.size, pygame.SRCALPHA)
     bg.fill((20, 15, 35, 220))
     surf.blit(bg, box.topleft)
-    pygame.draw.rect(surf, (190, 100, 255), box, width=2, border_radius=10)
+    pygame.draw.rect(surf, cor_borda, box, width=2, border_radius=10)
     for i, rendered in enumerate(rendereds):
         y = box.top + 10 + i * altura_linha
         surf.blit(rendered, (box.centerx - rendered.get_width() // 2, y))
