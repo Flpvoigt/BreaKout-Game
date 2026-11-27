@@ -1,5 +1,6 @@
 """Loop principal do jogo: estados (menu/jogando/pausado), eventos de
 teclado, fisica por frame e o desenho de cada tela."""
+import math
 import random
 import sys
 
@@ -9,6 +10,7 @@ pygame.init()
 
 import ui
 import audio
+import conquistas
 import leaderboard
 import player_profile as profile
 import skins
@@ -77,6 +79,15 @@ def principal():
     raio_secreto_trovao_tocado = False
     revelar_skin_lendaria = False
 
+    conquista_msg = ""
+    conquista_msg_until = 0
+
+    combo_contador = 0
+    combo_ultimo_hit = 0
+    combo_flash_texto = ""
+    combo_flash_cor = WHITE
+    combo_flash_until = 0
+
     inv_categoria = "bolas"
     inv_idx = 0
     inv_msg = ""
@@ -102,7 +113,6 @@ def principal():
     player_name = ""
     name_entry_context = None  # "gameover_qualify" ou "rename"
     rank_check_phase = "idle"
-    offering_potion = False
     transitioning = False
     level_transition_until = 0
 
@@ -110,6 +120,9 @@ def principal():
     slow_until = 0
     paddle_cannons_until = 0
     cannon_last_fire = {"left": 0, "right": 0}
+    magnet_until = 0
+    fantasma_until = 0
+    encolhida_until = 0
 
     bonus_active = False
     bonus_until = 0
@@ -122,13 +135,15 @@ def principal():
 
     def reiniciar_jogo():
         nonlocal paddle, balls, bricks, particles, powerups, projectiles, score, lives, shake
-        nonlocal game_over, entering_name, player_name, name_entry_context, rank_check_phase, offering_potion
+        nonlocal game_over, entering_name, player_name, name_entry_context, rank_check_phase
         nonlocal paddle_wide_until, slow_until, game_start_ticks, elapsed_ms
         nonlocal paddle_cannons_until, cannon_last_fire
+        nonlocal magnet_until, fantasma_until, encolhida_until
         nonlocal level, transitioning, level_transition_until
         nonlocal paused, pause_selected, pause_accum_ms, frozen_now
         nonlocal bonus_active, bonus_until, bonus_coins, bonus_score_gain, last_bonus_gain
         nonlocal raio_secreto_ativo, raio_secreto_trovao_tocado, revelar_skin_lendaria
+        nonlocal combo_contador, combo_ultimo_hit, combo_flash_until
         paddle = Paddle()
         balls = [Ball()]
         level = 1
@@ -144,13 +159,15 @@ def principal():
         player_name = ""
         name_entry_context = None
         rank_check_phase = "idle"
-        offering_potion = False
         transitioning = False
         level_transition_until = 0
         paddle_wide_until = 0
         slow_until = 0
         paddle_cannons_until = 0
         cannon_last_fire = {"left": 0, "right": 0}
+        magnet_until = 0
+        fantasma_until = 0
+        encolhida_until = 0
         bonus_active = False
         bonus_until = 0
         bonus_coins = []
@@ -159,6 +176,9 @@ def principal():
         raio_secreto_ativo = False
         raio_secreto_trovao_tocado = False
         revelar_skin_lendaria = False
+        combo_contador = 0
+        combo_ultimo_hit = 0
+        combo_flash_until = 0
         game_start_ticks = pygame.time.get_ticks()
         elapsed_ms = 0
         paused = False
@@ -193,6 +213,39 @@ def principal():
             state = "menu"
             menu_view = "main"
             menu_selected = 0
+
+    def verificar_conquistas():
+        """Chama depois de qualquer evento que pode ter avancado uma
+        estatistica (tijolo destruido, fase concluida, moeda ganha, etc).
+        Mostra um toast se alguma conquista/nivel novo foi desbloqueado."""
+        nonlocal conquista_msg, conquista_msg_until
+        novas = conquistas.verificar_novas()
+        if novas:
+            nomes = ", ".join(nome for nome, _nivel in novas)
+            conquista_msg = f"Conquista desbloqueada: {nomes}!"
+            conquista_msg_until = now + 3200
+            audio.tocar_som("victory")
+
+    def registrar_combo():
+        """Chama a cada tijolo destruido. Conta acertos seguidos sem a bola
+        voltar na raquete (zera sozinho se ficar parado tempo demais tambem) e
+        devolve o multiplicador de pontos atual. Dispara a mensagem de hype
+        (COMBO!/OTIMO!/INCRIVEL!/IMPARAVEL!) so quando o multiplicador sobe de
+        nivel, nao a cada acerto."""
+        nonlocal combo_contador, combo_ultimo_hit, combo_flash_texto, combo_flash_cor, combo_flash_until, shake
+        if now - combo_ultimo_hit > COMBO_TIMEOUT_MS:
+            combo_contador = 0
+        combo_contador += 1
+        combo_ultimo_hit = now
+        mult_anterior = min(COMBO_MULTIPLICADOR_MAX, 1 + (combo_contador - 1) // COMBO_MULTIPLICADOR_PASSO)
+        multiplicador = min(COMBO_MULTIPLICADOR_MAX, 1 + combo_contador // COMBO_MULTIPLICADOR_PASSO)
+        if multiplicador > mult_anterior and multiplicador in COMBO_MENSAGENS:
+            combo_flash_texto, combo_flash_cor = COMBO_MENSAGENS[multiplicador]
+            combo_flash_until = now + 1100
+            audio.tocar_som("victory" if multiplicador >= 4 else "powerup")
+            if multiplicador >= 4:
+                shake = max(shake, 10)
+        return multiplicador
 
     now = 0
     while True:
@@ -230,13 +283,12 @@ def principal():
                             if rect.collidepoint(_mouse_pos_logico(event.pos)):
                                 loja_categoria = cat_id
                                 loja_idx = 0
-                        if loja_categoria != "pocoes":
-                            lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
-                            left_arrow, right_arrow = ui.obter_retangulos_setas_loja()
-                            if left_arrow.collidepoint(_mouse_pos_logico(event.pos)):
-                                loja_idx = (loja_idx - 1) % len(lista)
-                            elif right_arrow.collidepoint(_mouse_pos_logico(event.pos)):
-                                loja_idx = (loja_idx + 1) % len(lista)
+                        lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
+                        left_arrow, right_arrow = ui.obter_retangulos_setas_loja()
+                        if left_arrow.collidepoint(_mouse_pos_logico(event.pos)):
+                            loja_idx = (loja_idx - 1) % len(lista)
+                        elif right_arrow.collidepoint(_mouse_pos_logico(event.pos)):
+                            loja_idx = (loja_idx + 1) % len(lista)
                 elif state == "menu" and menu_view == "inventario":
                     if ui.obter_retangulo_fechar_loja().collidepoint(_mouse_pos_logico(event.pos)):
                         menu_view = "main"
@@ -245,7 +297,7 @@ def principal():
                             if rect.collidepoint(_mouse_pos_logico(event.pos)):
                                 inv_categoria = cat_id
                                 inv_idx = 0
-                        if inv_categoria != "pocoes":
+                        if inv_categoria != "conquistas":
                             lista = ui.obter_itens_possuidos(inv_categoria)
                             left_arrow, right_arrow = ui.obter_retangulos_setas_loja()
                             if lista:
@@ -268,6 +320,7 @@ def principal():
                         ja_tinha = profile.possui_skin_raquete("tempestade")
                         profile.desbloquear_skin_raquete("tempestade")
                         profile.equipar_skin_raquete("tempestade")
+                        verificar_conquistas()
                         paddle_visivel = state == "playing" and not game_over and not transitioning
                         if paddle_visivel:
                             paddle.skin = "tempestade"
@@ -309,19 +362,6 @@ def principal():
                         player_name = player_name[:-1]
                     elif event.unicode and event.unicode.isprintable() and len(player_name) < leaderboard.MAX_NAME_LEN:
                         player_name += event.unicode
-                elif offering_potion:
-                    if event.key in (pygame.K_s, pygame.K_SPACE, pygame.K_RETURN):
-                        profile.usar_pocao()
-                        offering_potion = False
-                        lives = 1
-                        balls = [Ball()]
-                        audio.tocar_som("buy_life")
-                    elif event.key in (pygame.K_n, pygame.K_ESCAPE):
-                        offering_potion = False
-                        game_over = True
-                        rank_check_phase = "checking"
-                        leaderboard.verificar_colocacao_async(score, profile.obter_id_jogador())
-                        audio.tocar_som("game_over")
                 elif state == "menu":
                     if menu_view == "ranking":
                         if event.key in (pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN):
@@ -334,7 +374,7 @@ def principal():
                         if event.key in (pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN):
                             menu_view = "main"
                     elif menu_view == "loja":
-                        categorias = ["bolas", "raquetes", "pocoes"]
+                        categorias = ["bolas", "raquetes"]
                         if event.key == pygame.K_ESCAPE:
                             menu_view = "main"
                         elif event.key in (pygame.K_UP, pygame.K_w):
@@ -343,10 +383,10 @@ def principal():
                         elif event.key in (pygame.K_DOWN, pygame.K_s):
                             loja_categoria = categorias[(categorias.index(loja_categoria) + 1) % len(categorias)]
                             loja_idx = 0
-                        elif event.key in (pygame.K_LEFT, pygame.K_a) and loja_categoria in ("bolas", "raquetes"):
+                        elif event.key in (pygame.K_LEFT, pygame.K_a):
                             lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
                             loja_idx = (loja_idx - 1) % len(lista)
-                        elif event.key in (pygame.K_RIGHT, pygame.K_d) and loja_categoria in ("bolas", "raquetes"):
+                        elif event.key in (pygame.K_RIGHT, pygame.K_d):
                             lista = skins.BALL_SKIN_ORDER if loja_categoria == "bolas" else skins.PADDLE_SKIN_ORDER
                             loja_idx = (loja_idx + 1) % len(lista)
                         elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
@@ -379,16 +419,8 @@ def principal():
                                 else:
                                     loja_msg = "Moedas insuficientes!"
                                 loja_msg_until = t + 1500
-                            elif loja_categoria == "pocoes":
-                                if profile.gastar_moedas(skins.POTION_PRECO):
-                                    profile.adicionar_pocao()
-                                    audio.tocar_som("powerup")
-                                    loja_msg = f"Pocao comprada! Total: {profile.obter_pocoes()}"
-                                else:
-                                    loja_msg = "Moedas insuficientes!"
-                                loja_msg_until = t + 1500
                     elif menu_view == "inventario":
-                        categorias = ["bolas", "raquetes", "pocoes"]
+                        categorias = ["bolas", "raquetes", "conquistas"]
                         if event.key == pygame.K_ESCAPE:
                             menu_view = "main"
                         elif event.key in (pygame.K_UP, pygame.K_w):
@@ -397,15 +429,15 @@ def principal():
                         elif event.key in (pygame.K_DOWN, pygame.K_s):
                             inv_categoria = categorias[(categorias.index(inv_categoria) + 1) % len(categorias)]
                             inv_idx = 0
-                        elif event.key in (pygame.K_LEFT, pygame.K_a) and inv_categoria != "pocoes":
+                        elif event.key in (pygame.K_LEFT, pygame.K_a) and inv_categoria != "conquistas":
                             lista = ui.obter_itens_possuidos(inv_categoria)
                             if lista:
                                 inv_idx = (inv_idx - 1) % len(lista)
-                        elif event.key in (pygame.K_RIGHT, pygame.K_d) and inv_categoria != "pocoes":
+                        elif event.key in (pygame.K_RIGHT, pygame.K_d) and inv_categoria != "conquistas":
                             lista = ui.obter_itens_possuidos(inv_categoria)
                             if lista:
                                 inv_idx = (inv_idx + 1) % len(lista)
-                        elif event.key in (pygame.K_SPACE, pygame.K_RETURN) and inv_categoria != "pocoes":
+                        elif event.key in (pygame.K_SPACE, pygame.K_RETURN) and inv_categoria != "conquistas":
                             lista = ui.obter_itens_possuidos(inv_categoria)
                             if lista:
                                 skin_id = lista[inv_idx % len(lista)]
@@ -513,16 +545,26 @@ def principal():
             paddle_wide_until = 0
             slow_until = 0
             paddle_cannons_until = 0
+            magnet_until = 0
+            fantasma_until = 0
+            encolhida_until = 0
             last_bonus_gain = 0
+            combo_contador = 0
 
-        if state == "playing" and not game_over and not transitioning and not paused and not offering_potion:
+        if state == "playing" and not game_over and not transitioning and not paused:
             elapsed_ms = now - game_start_ticks
 
             paddle.atualizar(keys)
 
-            # efeito raquete larga (duracao real em ms)
-            target_width = int(paddle.base_width * 1.6) if now < paddle_wide_until else paddle.base_width
-            paddle.definir_largura(target_width)
+            # efeito raquete larga/encolhida (duracao real em ms) - se os dois
+            # estiverem ativos ao mesmo tempo, os efeitos se combinam (e quase
+            # se cancelam) em vez de um sobrescrever o outro
+            width_mult = 1.0
+            if now < paddle_wide_until:
+                width_mult *= 1.6
+            if now < encolhida_until:
+                width_mult *= SHRINK_FACTOR
+            paddle.definir_largura(int(paddle.base_width * width_mult))
 
             # efeito bola lenta (duracao real em ms)
             speed_factor = SLOW_FACTOR if now < slow_until else 1.0
@@ -536,10 +578,15 @@ def principal():
             # colisao com a raquete
             for b in balls:
                 if not b.stuck and b.retangulo().colliderect(paddle.retangulo()) and b.vy > 0:
-                    b.vy *= -1
-                    hit_pos = (b.x - paddle.x) / paddle.width - 0.5
-                    b.vx += hit_pos * 6
-                    b.vx = max(-9, min(9, b.vx))
+                    combo_contador = 0
+                    if now < magnet_until:
+                        b.stuck = True
+                        b.grudar_em(paddle)
+                    else:
+                        b.vy *= -1
+                        hit_pos = (b.x - paddle.x) / paddle.width - 0.5
+                        b.vx += hit_pos * 6
+                        b.vx = max(-9, min(9, b.vx))
                     audio.tocar_som("hit_paddle")
 
             # canhoes (power-up C): disparam projeteis das duas pontas da raquete
@@ -563,15 +610,24 @@ def principal():
                     for brick in bricks:
                         if brick.alive and b.retangulo().colliderect(brick.rect):
                             destroyed = brick.atingir()
-                            b.vy *= -1
+                            if now >= fantasma_until:
+                                b.vy *= -1
                             if destroyed:
-                                score += 10
+                                multiplicador = registrar_combo()
+                                score += 10 * multiplicador
+                                if multiplicador > 1:
+                                    bonus_moedas = multiplicador - 1
+                                    profile.adicionar_moedas(bonus_moedas)
+                                    profile.incrementar_estatistica("moedas_total_ganhas", bonus_moedas)
                                 shake = 8
+                                profile.incrementar_estatistica("tijolos_destruidos")
+                                verificar_conquistas()
                                 audio.tocar_som("brick_destroy")
                                 for _ in range(18):
                                     particles.append(Particle(brick.rect.centerx, brick.rect.centery, brick.base_color))
                                 if random.random() < POWERUP_DROP_CHANCE:
-                                    kind = random.choice(list(POWERUP_COLORS.keys()))
+                                    kind = random.choices(list(POWERUP_WEIGHTS.keys()),
+                                                           weights=list(POWERUP_WEIGHTS.values()), k=1)[0]
                                     powerups.append(PowerUp(brick.rect.centerx, brick.rect.centery, kind))
                             else:
                                 shake = 4
@@ -584,13 +640,21 @@ def principal():
                         if brick.alive and proj.retangulo().colliderect(brick.rect):
                             destroyed = brick.atingir()
                             if destroyed:
-                                score += 10
+                                multiplicador = registrar_combo()
+                                score += 10 * multiplicador
+                                if multiplicador > 1:
+                                    bonus_moedas = multiplicador - 1
+                                    profile.adicionar_moedas(bonus_moedas)
+                                    profile.incrementar_estatistica("moedas_total_ganhas", bonus_moedas)
                                 shake = 6
+                                profile.incrementar_estatistica("tijolos_destruidos")
+                                verificar_conquistas()
                                 audio.tocar_som("brick_destroy")
                                 for _ in range(14):
                                     particles.append(Particle(brick.rect.centerx, brick.rect.centery, brick.base_color))
                                 if random.random() < POWERUP_DROP_CHANCE:
-                                    kind = random.choice(list(POWERUP_COLORS.keys()))
+                                    kind = random.choices(list(POWERUP_WEIGHTS.keys()),
+                                                           weights=list(POWERUP_WEIGHTS.values()), k=1)[0]
                                     powerups.append(PowerUp(brick.rect.centerx, brick.rect.centery, kind))
                             else:
                                 audio.tocar_som("brick_hit")
@@ -603,16 +667,13 @@ def principal():
                     lives -= 1
                     shake = 15
                     if lives <= 0:
-                        if profile.obter_pocoes() > 0:
-                            offering_potion = True
-                            balls = []
-                            audio.tocar_som("lose_life")
-                        else:
-                            game_over = True
-                            rank_check_phase = "checking"
-                            leaderboard.verificar_colocacao_async(score, profile.obter_id_jogador())
-                            balls = []
-                            audio.tocar_som("game_over")
+                        game_over = True
+                        profile.incrementar_estatistica("partidas_jogadas")
+                        verificar_conquistas()
+                        rank_check_phase = "checking"
+                        leaderboard.verificar_colocacao_async(score, profile.obter_id_jogador())
+                        balls = []
+                        audio.tocar_som("game_over")
                     else:
                         balls = [Ball()]
                         audio.tocar_som("lose_life")
@@ -624,7 +685,7 @@ def principal():
                 for pu in powerups:
                     pu.atualizar()
                     if pu.retangulo().colliderect(paddle.retangulo()):
-                        audio.tocar_som("powerup")
+                        audio.tocar_som("buy_life" if pu.kind == "L" else "powerup")
                         if pu.kind == "W":
                             paddle_wide_until = now + WIDE_DURATION_MS
                         elif pu.kind == "S":
@@ -645,6 +706,18 @@ def principal():
                                 for i in range(to_add):
                                     offset = -3 if i == 0 else 3
                                     balls.append(criar_bola_extra(source, offset))
+                        elif pu.kind == "G":
+                            magnet_until = now + MAGNET_DURATION_MS
+                        elif pu.kind == "F":
+                            fantasma_until = now + GHOST_DURATION_MS
+                            profile.incrementar_estatistica("fantasmas_coletados")
+                            verificar_conquistas()
+                        elif pu.kind == "L":
+                            lives += 1
+                            profile.incrementar_estatistica("vidas_extras_coletadas")
+                            verificar_conquistas()
+                        elif pu.kind == "P":
+                            encolhida_until = now + SHRINK_DURATION_MS
                         continue
                     if pu.y - pu.h / 2 > HEIGHT:
                         continue
@@ -654,6 +727,9 @@ def principal():
                 if bricks and all(not b.alive for b in bricks):
                     audio.tocar_som("victory")
                     profile.adicionar_moedas(COINS_PER_LEVEL_CLEARED)
+                    profile.incrementar_estatistica("moedas_total_ganhas", COINS_PER_LEVEL_CLEARED)
+                    profile.definir_estatistica_maxima("maior_nivel", level)
+                    verificar_conquistas()
                     if level % BONUS_LEVEL_INTERVAL == 0:
                         bonus_active = True
                         bonus_until = now + BONUS_LEVEL_DURATION_MS
@@ -663,6 +739,10 @@ def principal():
                         paddle_wide_until = 0
                         slow_until = 0
                         paddle_cannons_until = 0
+                        magnet_until = 0
+                        fantasma_until = 0
+                        encolhida_until = 0
+                        combo_contador = 0
                         powerups = []
                         projectiles = []
                     else:
@@ -679,6 +759,8 @@ def principal():
                             score += BONUS_COIN_VALUE
                             bonus_score_gain += BONUS_COIN_VALUE
                             profile.adicionar_moedas(1)
+                            profile.incrementar_estatistica("moedas_total_ganhas", 1)
+                            verificar_conquistas()
                             shake = 3
                             audio.tocar_som("coin")
                             for _ in range(10):
@@ -739,6 +821,14 @@ def principal():
                 ui.desenhar_canhoes(draw_surf, paddle)
             for b in balls:
                 b.desenhar(draw_surf, now)
+                if now < fantasma_until:
+                    # halo translucido pulsante - deixa claro que a bola esta
+                    # atravessando tijolo sem quicar, nao e so cosmetico
+                    pulse = (math.sin(now / 90.0) + 1) / 2
+                    glow_r = int(b.radius * (1.8 + 0.3 * pulse))
+                    glow = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
+                    pygame.draw.circle(glow, (*POWERUP_COLORS["F"], int(90 + 60 * pulse)), (glow_r, glow_r), glow_r, width=3)
+                    draw_surf.blit(glow, (b.x - glow_r, b.y - glow_r))
             for pu in powerups:
                 pu.desenhar(draw_surf)
             for proj in projectiles:
@@ -758,6 +848,16 @@ def principal():
             draw_surf.blit(lives_text, (WIDTH - 150, 20))
             draw_surf.blit(time_text, (WIDTH // 2 - time_text.get_width() // 2, 20))
 
+            if combo_contador > 0 and now - combo_ultimo_hit <= COMBO_TIMEOUT_MS:
+                mult_atual = min(COMBO_MULTIPLICADOR_MAX, 1 + combo_contador // COMBO_MULTIPLICADOR_PASSO)
+                if mult_atual > 1:
+                    _, cor_combo = COMBO_MENSAGENS.get(mult_atual, (None, WHITE))
+                    combo_text = font.render(f"COMBO x{mult_atual}", True, cor_combo)
+                    draw_surf.blit(combo_text, (20, 86))
+
+            if now < combo_flash_until:
+                ui.desenhar_combo_flash(draw_surf, combo_flash_texto, combo_flash_cor, now, combo_flash_until)
+
             # contagem regressiva dos power-ups ativos / rodada bonus (tempo real, nao frames)
             # só faz sentido mostrar durante o jogo, não na tela de game over
             if not game_over:
@@ -771,6 +871,15 @@ def principal():
                 if now < paddle_cannons_until:
                     status_y = ui.desenhar_cronometro_powerup(draw_surf, "CANHOES", paddle_cannons_until, now,
                                         POWERUP_COLORS["C"], status_y)
+                if now < magnet_until:
+                    status_y = ui.desenhar_cronometro_powerup(draw_surf, "IMA", magnet_until, now,
+                                        POWERUP_COLORS["G"], status_y)
+                if now < fantasma_until:
+                    status_y = ui.desenhar_cronometro_powerup(draw_surf, "FANTASMA", fantasma_until, now,
+                                        POWERUP_COLORS["F"], status_y)
+                if now < encolhida_until:
+                    status_y = ui.desenhar_cronometro_powerup(draw_surf, "RAQUETE PEQUENA", encolhida_until, now,
+                                        POWERUP_COLORS["P"], status_y)
                 if bonus_active:
                     ui.desenhar_cronometro_powerup(draw_surf, "TEMPO BONUS", bonus_until, now,
                                         (255, 215, 0), status_y)
@@ -796,11 +905,12 @@ def principal():
             else:
                 ui.desenhar_entrada_nome(draw_surf, player_name)
 
-        if offering_potion:
-            ui.desenhar_oferta_pocao(draw_surf, profile.obter_pocoes())
-
         if now < codigo_secreto_msg_until:
             ui.desenhar_notificacao(draw_surf, codigo_secreto_msg)
+
+        if now < conquista_msg_until:
+            top = 140 if now < codigo_secreto_msg_until else 90
+            ui.desenhar_notificacao(draw_surf, conquista_msg, top=top, cor_borda=(255, 215, 0))
 
         scale, off_x, off_y = _calcular_escala_tela()
         if scale == 1.0:
